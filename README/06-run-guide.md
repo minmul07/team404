@@ -7,6 +7,14 @@
 현재 저장소는 Python 가상환경 `.venv`가 이미 있다고 가정하는 흔적이 있습니다.  
 실행 예시도 `.venv/bin/python`을 사용합니다.
 
+현재 확인된 개발 방식은 다음과 같습니다.
+
+- WSL2 안에서 FastMCP 서버 실행
+- `ngrok`로 포트 포워딩하여 공개 URL 생성
+- ChatGPT는 그 공개 URL을 통해 MCP/OAuth 메타데이터와 서버에 접근
+
+그리고 장기적으로는 개발이 어느 정도 완료되면 이 서버를 **AWS EC2에 배포**하는 흐름을 염두에 두고 있습니다.
+
 필수 직접 의존성:
 
 ```bash
@@ -95,6 +103,8 @@ FASTMCP_PORT=8000 \
 ChatGPT는 여러분 로컬 주소를 직접 볼 수 없으므로 공개 URL이 필요합니다.  
 예를 들어 ngrok 같은 터널을 쓰면 `https://...` 주소가 생깁니다.
 
+현재 프로젝트는 바로 이 방식, 즉 **WSL2에서 서버를 띄우고 ngrok 공개 URL을 ChatGPT에 연결하는 방식**으로 테스트 중입니다.
+
 이때 핵심은 `FASTMCP_BASE_URL`을 공개 주소로 맞추는 것입니다.
 
 예:
@@ -116,6 +126,46 @@ FASTMCP_DEV_USERS_FILE=oauth/dev_users.sample.json \
 
 - 원격 클라이언트가 신뢰 가능한 공개 엔드포인트를 기대하기 때문입니다.
 
+### 왜 `FASTMCP_JWT_SIGNING_KEY`도 거의 필수에 가까운가
+
+이 값은 서버가 발급하는 JWT access token, refresh token에 서명하고, 나중에 그 토큰이 진짜 자신이 만든 것인지 검증할 때 쓰는 비밀 재료입니다.
+
+쉽게 말하면:
+
+- `FASTMCP_BASE_URL`은 "어디로 접속할지"
+- `FASTMCP_JWT_SIGNING_KEY`는 "무엇을 믿을지"
+
+를 정합니다.
+
+특히 공개 URL로 ChatGPT와 연결할 때 이 값을 명시해 두는 편이 좋은 이유:
+
+- 서버 재시작 후에도 토큰 검증 기준이 흔들리지 않습니다.
+- access token과 refresh token의 서명 기준이 고정됩니다.
+- 나중에 서버를 여러 인스턴스로 늘릴 경우에도 같은 값을 쓰면 동일한 토큰을 검증할 수 있습니다.
+
+주의할 점:
+
+- 이 값이 바뀌면 이전에 발급한 토큰은 무효가 될 수 있습니다.
+- 너무 짧거나 예측 가능한 문자열은 좋지 않습니다.
+- Git에 올리는 파일에 하드코딩하지 않는 편이 안전합니다.
+
+이 프로젝트의 `custom` provider는 값을 생략하면 base URL 기반 개발용 키를 유도합니다. 다만 이것은 개발 편의를 위한 기본 동작이고, 지금처럼 ngrok 공개 주소로 실제 연결을 시험할 때는 명시적으로 넣는 편이 더 안전하고 동작도 예측하기 쉽습니다.
+
+### 이후 AWS EC2로 옮길 때의 의미
+
+현재의 ngrok 방식은 개발 속도가 빠르다는 장점이 있습니다. 반면 이후 AWS EC2에 올리면 다음이 더 자연스러워집니다.
+
+- 고정된 실행 환경 유지
+- 공개 주소를 매번 다시 바꾸지 않아도 됨
+- 장기간 켜 둔 서버 운영이 쉬움
+- ChatGPT나 다른 클라이언트가 접근할 안정적인 배포 환경 확보
+
+즉, 지금 문서의 실행 예시는 "개발 및 실험 단계"에 맞춘 것이고, 나중에 EC2로 옮길 때도 핵심 개념은 같습니다.
+
+- `FASTMCP_BASE_URL`은 실제 공개 주소로 바뀐다
+- `FASTMCP_JWT_SIGNING_KEY`는 계속 안정적으로 유지되어야 한다
+- OAuth 메타데이터와 redirect/resource 판단은 새 배포 주소 기준으로 다시 맞아야 한다
+
 ## 8. provider별 환경 변수 요약
 
 ### `custom`
@@ -126,7 +176,7 @@ FASTMCP_DEV_USERS_FILE=oauth/dev_users.sample.json \
 - `FASTMCP_AUTH_STORAGE_DIR`
 - `FASTMCP_ALLOWED_CLIENT_REDIRECT_URIS`
 - `FASTMCP_DEV_USERS_FILE`
-- `FASTMCP_JWT_SIGNING_KEY`
+- `FASTMCP_JWT_SIGNING_KEY`: access/refresh token 서명과 검증 기준이 되는 핵심 값
 
 ### `github`
 

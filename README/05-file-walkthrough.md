@@ -94,7 +94,7 @@
 - `FASTMCP_ALLOWED_CLIENT_REDIRECT_URIS`
 - `FASTMCP_DEV_USERS_FILE`
 - `FASTMCP_AUTH_STORAGE_DIR`
-- `FASTMCP_JWT_SIGNING_KEY`
+- `FASTMCP_JWT_SIGNING_KEY`: provider가 발급할 JWT access/refresh token의 서명 기준이 되는 값
 
 ### `github`
 
@@ -276,6 +276,14 @@ provider 초기화입니다.
 
 특히 JWT 서명 키가 없을 때 base URL 기반 개발용 키를 유도하는 부분은, 학습용 프로젝트답게 편의성을 높인 설계입니다. 다만 운영 환경에서는 고정된 안전한 키를 써야 합니다.
 
+`FASTMCP_JWT_SIGNING_KEY`를 초심자 눈높이로 다시 말하면 "이 서버가 만든 토큰임을 증명하는 도장 재료"에 가깝습니다.
+
+이 값이 중요한 이유:
+
+- `_issue_token_pair()`가 access token과 refresh token을 만들 때 이 기준으로 서명한다.
+- `_verify_jwt_token()`이 나중에 들어온 토큰을 검사할 때 같은 기준으로 확인한다.
+- 따라서 서버를 다시 띄웠을 때 이 값이 달라지면 예전에 발급한 토큰은 더 이상 신뢰되지 않을 수 있다.
+
 ## 2-7. `set_mcp_path`
 
 MCP 경로가 정해지면 resource URL을 바탕으로 JWT issuer를 준비합니다.
@@ -446,6 +454,8 @@ access와 refresh를 함께 정리합니다.
 ## 2-23. `_verify_jwt_token`
 
 JWT 검증을 수행하고, 기대한 토큰 종류(access 또는 refresh)와 맞는지도 확인합니다.
+
+여기서 검증 기준이 되는 것이 앞에서 준비한 `JWTIssuer`, 즉 `FASTMCP_JWT_SIGNING_KEY`로부터 만들어진 서명 키입니다.
 
 ## 2-24. `_render_approval_form`
 

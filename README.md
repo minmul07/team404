@@ -32,6 +32,7 @@
 - `greet`, `get_current_time`, `who_am_i`, `admin_ping` 네 개의 MCP 도구가 제공됩니다.
 - `admin_ping`는 `admin` scope가 있어야 통과합니다.
 - 런타임 상태는 보통 `.fastmcp/` 아래에 저장됩니다.
+- `FASTMCP_JWT_SIGNING_KEY`는 서버가 발급하는 JWT access/refresh token을 서명하고 나중에 검증할 때 쓰는 핵심 비밀 재료입니다.
 
 ## 이 저장소를 한 문장으로 말하면
 
@@ -70,6 +71,51 @@ FASTMCP_CLIENT_SCOPES="mcp:use" \
 브라우저 승인 화면이 열리면 사용자를 하나 선택하고 승인하면 됩니다.
 
 자세한 실행 배경과 공개 URL이 왜 필요한지는 [실행 방법과 실험 가이드](README/06-run-guide.md)를 보면 됩니다.
+
+## 현재 개발 환경과 이후 배포 계획
+
+현재는 **WSL2 환경에서 FastMCP 서버를 실행**하고, 그 서버의 포트를 **ngrok으로 외부에 공개**해서 ChatGPT 연동을 시험하고 있습니다.
+
+즉, 현재 개발 흐름은 대략 아래와 같습니다.
+
+```text
+WSL2 안의 Python 서버
+-> localhost/0.0.0.0:8000
+-> ngrok 공개 URL
+-> ChatGPT가 해당 공개 URL로 접속
+```
+
+이 방식은 개발 단계에서 빠르게 실험하기에 좋습니다. 다만 최종 형태는 아니고, 개발이 어느 정도 완료되면 **AWS EC2에 서버를 배포**해서 더 일반적인 상시 실행 환경으로 옮기는 것을 목표로 하고 있습니다.
+
+그래서 문서를 읽을 때도 다음처럼 구분해서 보면 됩니다.
+
+- 현재: WSL2 + ngrok 기반 개발/실험 환경
+- 이후: AWS EC2 기반 실제 배포 환경
+
+## 왜 `FASTMCP_JWT_SIGNING_KEY`가 중요한가
+
+`FASTMCP_BASE_URL`이 "클라이언트가 어디로 접속해야 하는가"를 정하는 값이라면, `FASTMCP_JWT_SIGNING_KEY`는 "서버가 발급한 토큰을 무엇으로 믿을 것인가"를 정하는 값입니다.
+
+이 프로젝트에서 이 값은 다음 역할을 합니다.
+
+- access token 서명
+- refresh token 서명
+- 이후 들어온 token 검증
+
+즉, 서버는 이 키를 바탕으로 "내가 발급한 토큰이 맞다"를 확인합니다.
+
+초심자 기준으로는 아래처럼 이해하면 됩니다.
+
+- `FASTMCP_BASE_URL`: 주소 문제
+- `FASTMCP_JWT_SIGNING_KEY`: 신뢰 문제
+
+왜 실전에서 중요하나:
+
+- 이 값이 바뀌면 이전에 발급한 토큰은 검증에 실패할 수 있습니다.
+- 서버를 여러 대 띄운다면 같은 토큰을 서로 검증할 수 있도록 같은 값을 공유해야 합니다.
+- 값을 생략하면 이 프로젝트의 `custom` provider는 base URL 기반 개발용 키를 유도하지만, 공개 URL로 실제 연동할 때는 고정된 강한 값을 명시하는 편이 안전하고 예측 가능합니다.
+
+관련 설명은 [실행 방법과 실험 가이드](README/06-run-guide.md)와 [파일별 상세 해설](README/05-file-walkthrough.md)에도 추가해 두었습니다.
 
 ## 문서를 읽으며 같이 보면 좋은 질문
 
