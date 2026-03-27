@@ -2,5 +2,7 @@ key*.*
 /.vscode
 /.venv
 /__pycache__
+/oauth/__pycache__
 /.codex
 /.fastmcp
+RUN.md
