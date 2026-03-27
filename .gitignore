@@ -1,0 +1,6 @@
+key*.*
+/.vscode
+/.venv
+/__pycache__
+/.codex
+/.fastmcp
