@@ -1,0 +1,7 @@
+.codex
+node_modules
+dist
+.DS_Store
+tmp
+data
+dev
