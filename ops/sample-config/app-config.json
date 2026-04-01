@@ -1,0 +1,22 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 3000
+  },
+  "monitor": {
+    "scriptPath": "../config/monitor.sh",
+    "restartDelayMs": 2000,
+    "movePairWindowMs": 750,
+    "targets": [
+      {
+        "id": "sandbox",
+        "rootPath": "../../tmp/watch"
+      }
+    ]
+  },
+  "rules": {
+    "burstWindowMs": 10000,
+    "burstThreshold": 5,
+    "incidentCooldownMs": 15000
+  }
+}
