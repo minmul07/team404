@@ -11,6 +11,13 @@ const ACTIVE_STATUSES = new Set([
   INCIDENT_STATUSES.RESTORE_PENDING
 ]);
 
+const SEVERITY_PRIORITY = new Map([
+  ['low', 1],
+  ['medium', 2],
+  ['high', 3],
+  ['critical', 4]
+]);
+
 export class IncidentStore {
   constructor({ eventBus }) {
     this.eventBus = eventBus;
@@ -62,13 +69,18 @@ export class IncidentStore {
         status: INCIDENT_STATUSES.DETECTED,
         monitorTargetId: match.monitorTargetId,
         monitorRootPath: match.monitorRootPath,
+        severity: match.severity ?? 'high',
+        autoQuarantine: Boolean(match.autoQuarantine),
+        reason: match.reason ?? null,
         openedAt: match.observedAt,
         updatedAt: match.observedAt,
         lastMatchAt: match.observedAt,
         ruleMatches: 1,
         totalObservedEvents: match.eventCount,
         samplePaths: match.samplePaths,
-        eventTypes: match.eventTypes
+        eventTypes: match.eventTypes ?? [match.eventType].filter(Boolean),
+        matchedRuleIds: [match.ruleId],
+        matchedRuleNames: [match.ruleName].filter(Boolean)
       };
 
       this.incidents.unshift(incident);
@@ -80,12 +92,21 @@ export class IncidentStore {
     currentIncident.updatedAt = match.observedAt;
     currentIncident.lastMatchAt = match.observedAt;
     currentIncident.ruleMatches += 1;
+    currentIncident.severity = pickHigherSeverity(currentIncident.severity, match.severity);
+    currentIncident.autoQuarantine = currentIncident.autoQuarantine || Boolean(match.autoQuarantine);
+    currentIncident.reason = match.reason ?? currentIncident.reason;
     currentIncident.totalObservedEvents = Math.max(
       currentIncident.totalObservedEvents,
       match.eventCount
     );
     currentIncident.samplePaths = [...new Set([...currentIncident.samplePaths, ...match.samplePaths])].slice(0, 10);
-    currentIncident.eventTypes = [...new Set([...currentIncident.eventTypes, ...match.eventTypes])];
+    currentIncident.eventTypes = [
+      ...new Set([...currentIncident.eventTypes, ...(match.eventTypes ?? [match.eventType].filter(Boolean))])
+    ];
+    currentIncident.matchedRuleIds = [...new Set([...currentIncident.matchedRuleIds, match.ruleId])];
+    currentIncident.matchedRuleNames = [
+      ...new Set([...currentIncident.matchedRuleNames, match.ruleName].filter(Boolean))
+    ];
     this.eventBus.emit(EVENT_NAMES.INCIDENT_UPDATED, currentIncident);
   }
 
@@ -103,4 +124,11 @@ export class IncidentStore {
 
     return incident;
   }
+}
+
+function pickHigherSeverity(currentSeverity = 'high', nextSeverity = 'high') {
+  const currentPriority = SEVERITY_PRIORITY.get(currentSeverity) ?? 0;
+  const nextPriority = SEVERITY_PRIORITY.get(nextSeverity) ?? 0;
+
+  return nextPriority > currentPriority ? nextSeverity : currentSeverity;
 }

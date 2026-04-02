@@ -23,6 +23,12 @@ export const FILE_EVENT_TYPES = Object.freeze({
   RENAME: 'rename'
 });
 
+export const DETECTABLE_FILE_EVENT_TYPES = Object.freeze([
+  FILE_EVENT_TYPES.CREATE,
+  FILE_EVENT_TYPES.MODIFY,
+  FILE_EVENT_TYPES.DELETE
+]);
+
 export const INCIDENT_STATUSES = Object.freeze({
   DETECTED: 'detected',
   TRIAGE: 'triage',
@@ -40,5 +46,8 @@ export const API_ROUTES = Object.freeze({
   INCIDENTS: '/api/incidents',
   HEALTH: '/api/health',
   ALERTS: '/api/alerts',
-  QUARANTINE_JOBS: '/api/quarantine-jobs'
+  QUARANTINE_JOBS: '/api/quarantine-jobs',
+  DEMO_START: '/api/demo/start',
+  DEMO_STOP: '/api/demo/stop',
+  WATCH_TARGET: '/api/watch/target'
 });
