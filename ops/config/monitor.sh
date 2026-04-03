@@ -12,5 +12,7 @@ inotifywait -m -r \
   --format $'%w%f\t%e' \
   -- "$@" |
   while IFS= read -r line; do
-    printf '%s\t%s\n' "$(date +%s%3N)" "$line"
+    # Avoid spawning `date` for every event.
+    ts=${EPOCHREALTIME/./}
+    printf '%s\t%s\n' "${ts:0:13}" "$line"
   done
