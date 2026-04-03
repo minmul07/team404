@@ -16,8 +16,8 @@ export function parseMonitorLine(line) {
     return null;
   }
 
-  const timestampSeconds = Number(timestampRaw);
-  if (!Number.isFinite(timestampSeconds)) {
+  const observedTs = parseObservedTimestamp(timestampRaw);
+  if (observedTs === null) {
     return null;
   }
 
@@ -33,8 +33,8 @@ export function parseMonitorLine(line) {
 
   return {
     id: crypto.randomUUID(),
-    observedTs: timestampSeconds * 1000,
-    observedAt: new Date(timestampSeconds * 1000).toISOString(),
+    observedTs,
+    observedAt: new Date(observedTs).toISOString(),
     path: filePath,
     rawEvents: tokens,
     rawType: normalizeRawType(rawType)
@@ -143,6 +143,23 @@ export class MonitorEventNormalizer {
 
 function normalizeRawType(rawType) {
   return rawType.toLowerCase();
+}
+
+function parseObservedTimestamp(timestampRaw) {
+  const numeric = Number(timestampRaw);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+
+  if (timestampRaw.includes('.')) {
+    return Math.round(numeric * 1000);
+  }
+
+  if (numeric >= 1_000_000_000_000) {
+    return Math.trunc(numeric);
+  }
+
+  return Math.trunc(numeric * 1000);
 }
 
 function resolveTarget(eventPath, targets) {

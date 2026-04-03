@@ -4,11 +4,18 @@ import assert from 'node:assert/strict';
 import { MonitorEventNormalizer, parseMonitorLine } from '../src/collector/monitor-event-parser.js';
 
 test('parseMonitorLine normalizes monitor output', () => {
-  const parsed = parseMonitorLine('1710000000\t/tmp/watch/file.txt\tMODIFY');
+  const parsed = parseMonitorLine('1710000000123\t/tmp/watch/file.txt\tMODIFY');
 
   assert.ok(parsed);
   assert.equal(parsed.rawType, 'modify');
   assert.equal(parsed.path, '/tmp/watch/file.txt');
+  assert.equal(parsed.observedTs, 1710000000123);
+});
+
+test('parseMonitorLine keeps second-based timestamps compatible', () => {
+  const parsed = parseMonitorLine('1710000000\t/tmp/watch/file.txt\tMODIFY');
+
+  assert.ok(parsed);
   assert.equal(parsed.observedTs, 1710000000000);
 });
 

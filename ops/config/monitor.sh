@@ -6,9 +6,11 @@ if [[ "$#" -lt 1 ]]; then
   exit 1
 fi
 
-exec inotifywait -m -r \
+inotifywait -m -r \
   -q \
   -e create -e modify -e delete -e moved_from -e moved_to \
-  --timefmt '%s' \
-  --format $'%T\t%w%f\t%e' \
-  -- "$@"
+  --format $'%w%f\t%e' \
+  -- "$@" |
+  while IFS= read -r line; do
+    printf '%s\t%s\n' "$(date +%s%3N)" "$line"
+  done
