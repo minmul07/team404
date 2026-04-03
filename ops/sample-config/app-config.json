@@ -10,13 +10,43 @@
     "targets": [
       {
         "id": "sandbox",
-        "rootPath": "../../tmp/watch"
+        "rootPath": "../../tmp/watch",
+        "enabled": true,
+        "autoQuarantineEnabled": false,
+        "demoAllowed": true
       }
     ]
   },
-  "rules": {
-    "burstWindowMs": 10000,
-    "burstThreshold": 5,
-    "incidentCooldownMs": 15000
-  }
+  "rules": [
+    {
+      "ruleId": "burst-create",
+      "ruleName": "Bulk Create Burst",
+      "eventType": "create",
+      "threshold": 5,
+      "windowMs": 10000,
+      "incidentCooldownMs": 15000,
+      "severity": "high",
+      "autoQuarantine": false
+    },
+    {
+      "ruleId": "burst-modify",
+      "ruleName": "Bulk Modify Burst",
+      "eventType": "modify",
+      "threshold": 5,
+      "windowMs": 10000,
+      "incidentCooldownMs": 15000,
+      "severity": "critical",
+      "autoQuarantine": true
+    },
+    {
+      "ruleId": "burst-delete",
+      "ruleName": "Bulk Delete Burst",
+      "eventType": "delete",
+      "threshold": 5,
+      "windowMs": 10000,
+      "incidentCooldownMs": 15000,
+      "severity": "high",
+      "autoQuarantine": false
+    }
+  ]
 }

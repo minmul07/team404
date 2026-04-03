@@ -1,28 +1,77 @@
 import { once } from 'node:events';
 
+import { attachConsoleEventLogger } from './app/console-event-logger.js';
+import { parseRuntimeOptions } from './app/runtime-options.js';
 import { createRuntime } from './app/runtime.js';
 import { createApiServer } from './server/create-api-server.js';
 import { loadAppConfig } from './shared/config/load-app-config.js';
 
-const config = await loadAppConfig();
-const runtime = createRuntime(config);
-await runtime.start();
-
-const server = createApiServer({ runtime });
-
-server.listen(config.server.port, config.server.host, () => {
-  console.log(
-    `server listening on http://${config.server.host}:${config.server.port} using ${config.meta.configPath}`
-  );
+main().catch((error) => {
+  console.error(error.message);
+  process.exit(1);
 });
 
-const shutdownSignals = ['SIGINT', 'SIGTERM'];
-for (const signal of shutdownSignals) {
-  process.once(signal, async () => {
-    server.close();
-    await runtime.stop();
-    process.exit(0);
+async function main() {
+  const { configPath, withoutDashboard, demo } = parseRuntimeOptions(process.argv.slice(2));
+  const config = await loadAppConfig({ configPath });
+  const runtime = createRuntime(config, {
+    watchOptions: {
+      demo
+    }
   });
+  let detachConsoleEventLogger = null;
+
+  if (withoutDashboard) {
+    detachConsoleEventLogger = attachConsoleEventLogger({ eventBus: runtime.eventBus });
+  }
+
+  await runtime.start();
+
+  if (withoutDashboard) {
+    console.log(
+      `dashboard disabled; streaming fs_event logs using ${config.meta.configPath}${demo ? ' in demo mode' : ''}`
+    );
+    registerShutdownHandlers({
+      async onShutdown() {
+        detachConsoleEventLogger?.();
+        await runtime.stop();
+      }
+    });
+    await new Promise(() => {});
+    return;
+  }
+
+  const server = createApiServer({ runtime });
+
+  server.listen(config.server.port, config.server.host, () => {
+    console.log(
+      `server listening on http://${config.server.host}:${config.server.port} using ${config.meta.configPath}`
+    );
+  });
+
+  registerShutdownHandlers({
+    async onShutdown() {
+      server.close();
+      await runtime.stop();
+    }
+  });
+
+  await once(server, 'close');
 }
 
-await once(server, 'close');
+function registerShutdownHandlers({ onShutdown }) {
+  const shutdownSignals = ['SIGINT', 'SIGTERM'];
+  let isShuttingDown = false;
+
+  for (const signal of shutdownSignals) {
+    process.once(signal, async () => {
+      if (isShuttingDown) {
+        return;
+      }
+
+      isShuttingDown = true;
+      await onShutdown();
+      process.exit(0);
+    });
+  }
+}

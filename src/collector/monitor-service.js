@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
@@ -6,13 +7,15 @@ import { EVENT_NAMES } from '../shared/contracts/event-names.js';
 import { MonitorEventNormalizer, parseMonitorLine } from './monitor-event-parser.js';
 
 export class MonitorService {
-  constructor({ config, eventBus }) {
+  constructor({ config, eventBus, watchOptions = {} }) {
     this.config = config;
     this.eventBus = eventBus;
-    this.normalizer = new MonitorEventNormalizer({
-      targets: config.monitor.targets,
-      movePairWindowMs: config.monitor.movePairWindowMs
-    });
+    this.watchContext = resolveWatchContext(
+      config.monitor.targets,
+      watchOptions,
+      config.meta.projectRoot
+    );
+    this.normalizer = this.createNormalizer();
 
     this.status = 'idle';
     this.child = null;
@@ -28,7 +31,7 @@ export class MonitorService {
     this.isStopping = false;
     this.status = 'starting';
 
-    for (const target of this.config.monitor.targets) {
+    for (const target of this.watchContext.targets) {
       await mkdir(target.rootPath, { recursive: true });
     }
 
@@ -54,6 +57,7 @@ export class MonitorService {
 
     if (!this.child) {
       this.status = 'stopped';
+      this.emitHealth('stopped');
       return;
     }
 
@@ -69,6 +73,33 @@ export class MonitorService {
     this.emitHealth('stopped');
   }
 
+  async setWatchOptions(watchOptions = {}) {
+    const shouldRestart =
+      this.child !== null ||
+      this.restartTimer !== null ||
+      ['running', 'starting', 'degraded'].includes(this.status);
+
+    if (shouldRestart) {
+      await this.stop();
+    }
+
+    this.watchContext = resolveWatchContext(
+      this.config.monitor.targets,
+      watchOptions,
+      this.config.meta.projectRoot
+    );
+    this.normalizer = this.createNormalizer();
+    this.lastError = null;
+
+    if (shouldRestart) {
+      await this.start();
+    } else {
+      this.emitHealth(this.status);
+    }
+
+    return this.getHealth();
+  }
+
   getHealth() {
     return {
       status: this.status,
@@ -77,12 +108,21 @@ export class MonitorService {
       lastError: this.lastError,
       restartCount: this.restartCount,
       scriptPath: this.config.monitor.scriptPath,
-      targets: this.config.monitor.targets
+      activeMode: this.watchContext.activeMode,
+      activeTarget: this.watchContext.activeTarget,
+      targets: this.watchContext.targets
     };
   }
 
+  createNormalizer() {
+    return new MonitorEventNormalizer({
+      targets: this.watchContext.targets,
+      movePairWindowMs: this.config.monitor.movePairWindowMs
+    });
+  }
+
   spawnProcess() {
-    const roots = this.config.monitor.targets.map((target) => target.rootPath);
+    const roots = this.watchContext.targets.map((target) => target.rootPath);
     const command = 'bash';
     const args = [this.config.monitor.scriptPath, ...roots];
 
@@ -171,4 +211,75 @@ export class MonitorService {
       details: this.getHealth()
     });
   }
+}
+
+function resolveWatchContext(configuredTargets, watchOptions, projectRoot) {
+  const defaultTarget = configuredTargets[0];
+
+  if (watchOptions.demo) {
+    const baseTarget = defaultTarget ?? createFallbackTarget();
+    const activeTarget = {
+      ...baseTarget,
+      id: 'demo-target',
+      rootPath: resolveDemoTargetPath(projectRoot),
+      demoAllowed: true,
+      mode: 'demo'
+    };
+
+    return {
+      activeMode: 'demo',
+      activeTarget,
+      targets: [activeTarget]
+    };
+  }
+
+  if (watchOptions.targetPath) {
+    const baseTarget = defaultTarget ?? createFallbackTarget();
+    const activeTarget = {
+      ...baseTarget,
+      rootPath: path.resolve(watchOptions.targetPath),
+      mode: 'target'
+    };
+
+    return {
+      activeMode: 'target',
+      activeTarget,
+      targets: [activeTarget]
+    };
+  }
+
+  const targets =
+    configuredTargets.length > 0
+      ? configuredTargets.map((target) => ({
+          ...target,
+          mode: 'config'
+        }))
+      : [
+          {
+            ...createFallbackTarget(),
+            mode: 'config'
+          }
+        ];
+
+  const activeTarget = targets[0];
+
+  return {
+    activeMode: 'config',
+    activeTarget,
+    targets
+  };
+}
+
+function createFallbackTarget() {
+  return {
+    id: 'default-target',
+    rootPath: path.resolve('./tmp/watch'),
+    enabled: true,
+    autoQuarantineEnabled: false,
+    demoAllowed: false
+  };
+}
+
+function resolveDemoTargetPath(projectRoot) {
+  return path.resolve(projectRoot ?? '.', 'tmp/demo-target');
 }

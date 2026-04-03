@@ -16,8 +16,8 @@ export function parseMonitorLine(line) {
     return null;
   }
 
-  const timestampSeconds = Number(timestampRaw);
-  if (!Number.isFinite(timestampSeconds)) {
+  const observedTs = parseObservedTimestamp(timestampRaw);
+  if (observedTs === null) {
     return null;
   }
 
@@ -33,12 +33,11 @@ export function parseMonitorLine(line) {
 
   return {
     id: crypto.randomUUID(),
-    observedTs: timestampSeconds * 1000,
-    observedAt: new Date(timestampSeconds * 1000).toISOString(),
+    observedTs,
+    observedAt: new Date(observedTs).toISOString(),
     path: filePath,
     rawEvents: tokens,
-    rawType: normalizeRawType(rawType),
-    directory: path.dirname(filePath)
+    rawType: normalizeRawType(rawType)
   };
 }
 
@@ -103,11 +102,18 @@ export class MonitorEventNormalizer {
     return emitted;
   }
 
+  // target 디렉토리 간 이동: delete + create
+  // 동일 target 내 디렉토리 간 이동: rename
   findMoveMatch(rawEvent) {
+    const nextTarget = resolveTarget(rawEvent.path, this.targets);
     const index = this.pendingMoves.findIndex((pending) => {
       const withinWindow = rawEvent.observedTs - pending.observedTs <= this.movePairWindowMs;
-      const sameDirectory = pending.directory === rawEvent.directory;
-      return withinWindow && sameDirectory;
+      if (!withinWindow || !nextTarget) {
+        return false;
+      }
+
+      const pendingTarget = resolveTarget(pending.path, this.targets);
+      return pendingTarget?.rootPath === nextTarget.rootPath;
     });
 
     if (index === -1) {
@@ -137,6 +143,23 @@ export class MonitorEventNormalizer {
 
 function normalizeRawType(rawType) {
   return rawType.toLowerCase();
+}
+
+function parseObservedTimestamp(timestampRaw) {
+  const numeric = Number(timestampRaw);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+
+  if (timestampRaw.includes('.')) {
+    return Math.round(numeric * 1000);
+  }
+
+  if (numeric >= 1_000_000_000_000) {
+    return Math.trunc(numeric);
+  }
+
+  return Math.trunc(numeric * 1000);
 }
 
 function resolveTarget(eventPath, targets) {
