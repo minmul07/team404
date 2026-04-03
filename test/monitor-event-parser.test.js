@@ -29,3 +29,21 @@ test('MonitorEventNormalizer pairs move events into rename', () => {
   assert.equal(renameEvent.path, '/tmp/watch/after.txt');
   assert.equal(renameEvent.monitorTargetId, 'sandbox');
 });
+
+test('MonitorEventNormalizer pairs cross-directory moves inside the same target into rename', () => {
+  const normalizer = new MonitorEventNormalizer({
+    targets: [{ id: 'sandbox', rootPath: '/tmp/watch' }],
+    movePairWindowMs: 1000
+  });
+
+  const movedFrom = parseMonitorLine('1710000000\t/tmp/watch/wed/test.txt\tMOVED_FROM');
+  const movedTo = parseMonitorLine('1710000000\t/tmp/watch/test.txt\tMOVED_TO');
+
+  assert.deepEqual(normalizer.consume(movedFrom), []);
+
+  const [renameEvent] = normalizer.consume(movedTo);
+  assert.equal(renameEvent.type, 'rename');
+  assert.equal(renameEvent.previousPath, '/tmp/watch/wed/test.txt');
+  assert.equal(renameEvent.path, '/tmp/watch/test.txt');
+  assert.equal(renameEvent.monitorTargetId, 'sandbox');
+});

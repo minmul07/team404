@@ -37,8 +37,7 @@ export function parseMonitorLine(line) {
     observedAt: new Date(timestampSeconds * 1000).toISOString(),
     path: filePath,
     rawEvents: tokens,
-    rawType: normalizeRawType(rawType),
-    directory: path.dirname(filePath)
+    rawType: normalizeRawType(rawType)
   };
 }
 
@@ -103,11 +102,18 @@ export class MonitorEventNormalizer {
     return emitted;
   }
 
+  // target 디렉토리 간 이동: delete + create
+  // 동일 target 내 디렉토리 간 이동: rename
   findMoveMatch(rawEvent) {
+    const nextTarget = resolveTarget(rawEvent.path, this.targets);
     const index = this.pendingMoves.findIndex((pending) => {
       const withinWindow = rawEvent.observedTs - pending.observedTs <= this.movePairWindowMs;
-      const sameDirectory = pending.directory === rawEvent.directory;
-      return withinWindow && sameDirectory;
+      if (!withinWindow || !nextTarget) {
+        return false;
+      }
+
+      const pendingTarget = resolveTarget(pending.path, this.targets);
+      return pendingTarget?.rootPath === nextTarget.rootPath;
     });
 
     if (index === -1) {
