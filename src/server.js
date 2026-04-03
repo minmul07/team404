@@ -1,5 +1,7 @@
 import { once } from 'node:events';
 
+import { attachConsoleEventLogger } from './app/console-event-logger.js';
+import { parseRuntimeOptions } from './app/runtime-options.js';
 import { createRuntime } from './app/runtime.js';
 import { createApiServer } from './server/create-api-server.js';
 import { loadAppConfig } from './shared/config/load-app-config.js';
@@ -10,10 +12,34 @@ main().catch((error) => {
 });
 
 async function main() {
-  const { configPath } = parseRuntimeOptions(process.argv.slice(2));
+  const { configPath, withoutDashboard, demo } = parseRuntimeOptions(process.argv.slice(2));
   const config = await loadAppConfig({ configPath });
-  const runtime = createRuntime(config);
+  const runtime = createRuntime(config, {
+    watchOptions: {
+      demo
+    }
+  });
+  let detachConsoleEventLogger = null;
+
+  if (withoutDashboard) {
+    detachConsoleEventLogger = attachConsoleEventLogger({ eventBus: runtime.eventBus });
+  }
+
   await runtime.start();
+
+  if (withoutDashboard) {
+    console.log(
+      `dashboard disabled; streaming fs_event logs using ${config.meta.configPath}${demo ? ' in demo mode' : ''}`
+    );
+    registerShutdownHandlers({
+      async onShutdown() {
+        detachConsoleEventLogger?.();
+        await runtime.stop();
+      }
+    });
+    await new Promise(() => {});
+    return;
+  }
 
   const server = createApiServer({ runtime });
 
@@ -23,43 +49,29 @@ async function main() {
     );
   });
 
-  const shutdownSignals = ['SIGINT', 'SIGTERM'];
-  for (const signal of shutdownSignals) {
-    process.once(signal, async () => {
+  registerShutdownHandlers({
+    async onShutdown() {
       server.close();
       await runtime.stop();
-      process.exit(0);
-    });
-  }
+    }
+  });
 
   await once(server, 'close');
 }
 
-function parseRuntimeOptions(args) {
-  const options = {
-    configPath: undefined
-  };
+function registerShutdownHandlers({ onShutdown }) {
+  const shutdownSignals = ['SIGINT', 'SIGTERM'];
+  let isShuttingDown = false;
 
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
+  for (const signal of shutdownSignals) {
+    process.once(signal, async () => {
+      if (isShuttingDown) {
+        return;
+      }
 
-    if (arg === '--config') {
-      options.configPath = readFlagValue(args, index, '--config');
-      index += 1;
-      continue;
-    }
-
-    throw new Error(`Unknown argument: ${arg}`);
+      isShuttingDown = true;
+      await onShutdown();
+      process.exit(0);
+    });
   }
-
-  return options;
-}
-
-function readFlagValue(args, index, flagName) {
-  const nextValue = args[index + 1];
-  if (!nextValue || nextValue.startsWith('--')) {
-    throw new Error(`${flagName} requires a value`);
-  }
-
-  return nextValue;
 }

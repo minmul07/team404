@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { Readable } from 'node:stream';
 
 import { API_ROUTES } from '../src/shared/contracts/event-names.js';
 import { handleApiRequest } from '../src/server/create-api-server.js';
+
+const DEMO_TARGET_ROOT = path.resolve(process.cwd(), 'tmp/demo-target');
 
 test('handleApiRequest enables demo mode through POST /api/demo/start', async () => {
   const runtime = createRuntimeDouble();
@@ -22,7 +25,7 @@ test('handleApiRequest enables demo mode through POST /api/demo/start', async ()
   assert.equal(runtime.enableDemoModeCalls, 1);
   assert.equal(response.statusCode, 200);
   assert.equal(response.payload.activeMode, 'demo');
-  assert.equal(response.payload.activeTarget.rootPath, '/tmp/demo-target');
+  assert.equal(response.payload.activeTarget.rootPath, DEMO_TARGET_ROOT);
 });
 
 test('handleApiRequest disables demo mode through POST /api/demo/stop', async () => {
@@ -121,7 +124,7 @@ function createRuntimeDouble() {
       return {
         activeMode: 'demo',
         activeTarget: {
-          rootPath: '/tmp/demo-target'
+          rootPath: DEMO_TARGET_ROOT
         }
       };
     },

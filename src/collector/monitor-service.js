@@ -10,7 +10,11 @@ export class MonitorService {
   constructor({ config, eventBus, watchOptions = {} }) {
     this.config = config;
     this.eventBus = eventBus;
-    this.watchContext = resolveWatchContext(config.monitor.targets, watchOptions);
+    this.watchContext = resolveWatchContext(
+      config.monitor.targets,
+      watchOptions,
+      config.meta.projectRoot
+    );
     this.normalizer = this.createNormalizer();
 
     this.status = 'idle';
@@ -79,7 +83,11 @@ export class MonitorService {
       await this.stop();
     }
 
-    this.watchContext = resolveWatchContext(this.config.monitor.targets, watchOptions);
+    this.watchContext = resolveWatchContext(
+      this.config.monitor.targets,
+      watchOptions,
+      this.config.meta.projectRoot
+    );
     this.normalizer = this.createNormalizer();
     this.lastError = null;
 
@@ -205,7 +213,7 @@ export class MonitorService {
   }
 }
 
-function resolveWatchContext(configuredTargets, watchOptions) {
+function resolveWatchContext(configuredTargets, watchOptions, projectRoot) {
   const defaultTarget = configuredTargets[0];
 
   if (watchOptions.demo) {
@@ -213,7 +221,7 @@ function resolveWatchContext(configuredTargets, watchOptions) {
     const activeTarget = {
       ...baseTarget,
       id: 'demo-target',
-      rootPath: '/tmp/demo-target',
+      rootPath: resolveDemoTargetPath(projectRoot),
       demoAllowed: true,
       mode: 'demo'
     };
@@ -270,4 +278,8 @@ function createFallbackTarget() {
     autoQuarantineEnabled: false,
     demoAllowed: false
   };
+}
+
+function resolveDemoTargetPath(projectRoot) {
+  return path.resolve(projectRoot ?? '.', 'tmp/demo-target');
 }
