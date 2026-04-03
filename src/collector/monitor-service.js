@@ -240,15 +240,25 @@ function resolveWatchContext(configuredTargets, watchOptions) {
     };
   }
 
-  const activeTarget = {
-    ...(defaultTarget ?? createFallbackTarget()),
-    mode: 'config'
-  };
+  const targets =
+    configuredTargets.length > 0
+      ? configuredTargets.map((target) => ({
+          ...target,
+          mode: 'config'
+        }))
+      : [
+          {
+            ...createFallbackTarget(),
+            mode: 'config'
+          }
+        ];
+
+  const activeTarget = targets[0];
 
   return {
     activeMode: 'config',
     activeTarget,
-    targets: [activeTarget]
+    targets
   };
 }
 

@@ -17,6 +17,13 @@ function createConfig() {
           enabled: true,
           autoQuarantineEnabled: false,
           demoAllowed: true
+        },
+        {
+          id: 'archive',
+          rootPath: '/tmp/configured-archive',
+          enabled: true,
+          autoQuarantineEnabled: false,
+          demoAllowed: false
         }
       ]
     },
@@ -26,7 +33,7 @@ function createConfig() {
   };
 }
 
-test('MonitorService uses configured target by default', () => {
+test('MonitorService uses all configured targets by default', () => {
   const service = new MonitorService({
     config: createConfig(),
     eventBus: createEventBus()
@@ -35,7 +42,10 @@ test('MonitorService uses configured target by default', () => {
   const health = service.getHealth();
   assert.equal(health.activeMode, 'config');
   assert.equal(health.activeTarget.rootPath, '/tmp/configured-watch');
-  assert.equal(health.targets.length, 1);
+  assert.deepEqual(
+    health.targets.map((target) => target.rootPath),
+    ['/tmp/configured-watch', '/tmp/configured-archive']
+  );
 });
 
 test('MonitorService switches to demo mode when created with a demo flag', () => {
@@ -78,6 +88,7 @@ test('MonitorService can toggle demo mode on and off after creation', async () =
   await service.setWatchOptions();
   assert.equal(service.getHealth().activeMode, 'config');
   assert.equal(service.getHealth().activeTarget.rootPath, '/tmp/configured-watch');
+  assert.equal(service.getHealth().targets.length, 2);
 });
 
 test('MonitorService can switch to a new target path after creation', async () => {
@@ -93,4 +104,5 @@ test('MonitorService can switch to a new target path after creation', async () =
   await service.setWatchOptions();
   assert.equal(service.getHealth().activeMode, 'config');
   assert.equal(service.getHealth().activeTarget.rootPath, '/tmp/configured-watch');
+  assert.equal(service.getHealth().targets.length, 2);
 });
