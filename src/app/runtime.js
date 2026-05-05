@@ -2,11 +2,13 @@ import { createEventBus } from '../shared/utils/create-event-bus.js';
 import { MonitorService } from '../collector/monitor-service.js';
 import { IncidentStore } from '../incidents/incident-store.js';
 import { RuleEngine } from '../rules/rule-engine.js';
+import { QuarantineService } from '../isolation/quarantine-service.js';
 
 export function createRuntime(config, options = {}) {
   const eventBus = createEventBus();
   const incidentStore = new IncidentStore({ eventBus });
   const ruleEngine = new RuleEngine({ eventBus, config });
+  const quarantineService = new QuarantineService({ eventBus });
   const monitorService = new MonitorService({
     config,
     eventBus,
@@ -42,6 +44,7 @@ export function createRuntime(config, options = {}) {
     async stop() {
       await monitorService.stop();
       ruleEngine.stop();
+      quarantineService.stop();
       incidentStore.stop();
       state.stoppedAt = new Date().toISOString();
     },
@@ -84,8 +87,11 @@ export function createRuntime(config, options = {}) {
         activeTarget: monitorHealth.activeTarget,
         incidents: incidentStore.getIncidents(),
         alerts: incidentStore.getAlerts(),
-        quarantineJobs: incidentStore.getQuarantineJobs()
+        quarantineJobs: quarantineService.getQuarantineJobs()
       };
+    },                          // ← 콤마 추가
+    async restoreIncident(incidentId) {
+      return quarantineService.restore(incidentId);
     }
   };
 }
