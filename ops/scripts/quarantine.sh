@@ -2,9 +2,12 @@
 # quarantine.sh
 # 감시 대상 디렉터리의 파일/폴더 권한을 잠근다.
 # 사용법: ./quarantine.sh <rootPath>
-# 예시: ./quarantine.sh /tmp/watch
+# 예시:  ./quarantine.sh /tmp/demo-target
+#
+# stdout 출력 형식 (JS 파싱용, 탭 구분):
+#   PROGRESS\t<file|dir>\t<path>\t<success|failed>
 
-set -euo pipefail
+set -uo pipefail
 
 ROOT_PATH="${1:-}"
 
@@ -18,12 +21,20 @@ if [ ! -d "$ROOT_PATH" ]; then
   exit 1
 fi
 
-echo "[quarantine.sh] 파일 권한 잠금 시작: $ROOT_PATH"
-
 # 파일 -> 400 (읽기 전용, 소유자만)
-find "$ROOT_PATH" -type f -exec chmod 400 {} \;
+while IFS= read -r -d '' file; do
+  if chmod 400 "$file" 2>/dev/null; then
+    printf 'PROGRESS\tfile\t%s\tsuccess\n' "$file"
+  else
+    printf 'PROGRESS\tfile\t%s\tfailed\n' "$file"
+  fi
+done < <(find "$ROOT_PATH" -type f -print0)
 
 # 디렉터리 -> 500 (읽기+실행, 소유자만 / 쓰기 불가)
-find "$ROOT_PATH" -type d -exec chmod 500 {} \;
-
-echo "[quarantine.sh] 권한 잠금 완료: $ROOT_PATH"
+while IFS= read -r -d '' dir; do
+  if chmod 500 "$dir" 2>/dev/null; then
+    printf 'PROGRESS\tdir\t%s\tsuccess\n' "$dir"
+  else
+    printf 'PROGRESS\tdir\t%s\tfailed\n' "$dir"
+  fi
+done < <(find "$ROOT_PATH" -type d -print0)

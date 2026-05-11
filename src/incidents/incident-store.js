@@ -28,10 +28,14 @@ export class IncidentStore {
 
     this.handleRuleMatch = this.handleRuleMatch.bind(this);
     this.eventBus.on(EVENT_NAMES.RULE_MATCH, this.handleRuleMatch);
+
+    this.handleIncidentStatusUpdate = this.handleIncidentStatusUpdate.bind(this);
+    this.eventBus.on(EVENT_NAMES.INCIDENT_UPDATED, this.handleIncidentStatusUpdate);
   }
 
   stop() {
     this.eventBus.off(EVENT_NAMES.RULE_MATCH, this.handleRuleMatch);
+    this.eventBus.off(EVENT_NAMES.INCIDENT_UPDATED, this.handleIncidentStatusUpdate);
   }
 
   getIncidents() {
@@ -108,6 +112,21 @@ export class IncidentStore {
       ...new Set([...currentIncident.matchedRuleNames, match.ruleName].filter(Boolean))
     ];
     this.eventBus.emit(EVENT_NAMES.INCIDENT_UPDATED, currentIncident);
+  }
+
+  /**
+   * QuarantineService 가 emit 하는 INCIDENT_UPDATED(_source='quarantine') 수신
+   * incident.status 와 updatedAt 을 갱신한다.
+   *
+   * 수신 payload 예시:
+   * { id: "uuid", status: "quarantining", updatedAt: "2026-...", _source: "quarantine" }
+   */
+  handleIncidentStatusUpdate(payload) {
+    if (payload._source !== 'quarantine') return;
+    const incident = this.incidents.find((item) => item.id === payload.id);
+    if (!incident) return;
+    incident.status = payload.status;
+    incident.updatedAt = payload.updatedAt ?? new Date().toISOString();
   }
 
   getActiveIncident(targetKey) {
