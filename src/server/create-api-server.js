@@ -1,106 +1,65 @@
 import http from 'node:http';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { createRuntime } from '../app/runtime.js';
 
-import { API_ROUTES } from '../shared/contracts/event-names.js';
+const PORT = 3000;
+const HOST = '0.0.0.0';
 
-export function createApiServer({ runtime }) {
-  return http.createServer((request, response) => {
-    handleApiRequest({ runtime, request, response }).catch((error) => {
-      const statusCode = error.statusCode ?? 500;
-      writeJson(response, statusCode, {
-        error: statusCode === 500 ? 'Internal Server Error' : 'Bad Request',
-        message: error.message
-      });
+// 함수 이름을 src/server.js와 맞춰서 export 합니다.
+export function createServer(runtime) {
+    return http.createServer(async (request, response) => {
+        const url = new URL(request.url, `http://${request.headers.host}`);
+
+        // [1] 대시보드 정적 파일 처리 (HTML, CSS, JS)
+        let filePath = '';
+        if (url.pathname === '/' || url.pathname === '/index.html') {
+            filePath = './public/index.html';
+        } else if (url.pathname === '/style.css') {
+            filePath = './public/style.css';
+        } else if (url.pathname === '/app.js') {
+            filePath = './public/app.js';
+        }
+
+        if (filePath) {
+            try {
+                const content = await fs.readFile(filePath);
+                const contentType = filePath.endsWith('.html') ? 'text/html' : 
+                                  filePath.endsWith('.css') ? 'text/css' : 'application/javascript';
+                response.writeHead(200, { 'Content-Type': `${contentType}; charset=utf-8` });
+                return response.end(content);
+            } catch (err) {
+                return writeJson(response, 404, { error: `파일을 찾을 수 없습니다: ${filePath}` });
+            }
+        }
+
+        // [2] API 경로 처리 (대시보드 app.js에서 호출하는 경로)
+        if (url.pathname === '/api/snapshot') {
+            try {
+                const data = await runtime.getSnapshot();
+                return writeJson(response, 200, data);
+            } catch (error) {
+                return writeJson(response, 500, { error: error.message });
+            }
+        }
+
+        // [3] 복구 API
+        const restoreMatch = request.method === 'POST' && url.pathname.match(/^\/api\/incidents\/([^/]+)\/restore$/);
+        if (restoreMatch) {
+            const incidentId = restoreMatch[1];
+            try {
+                const result = await runtime.restoreIncident(incidentId);
+                return writeJson(response, 200, result);
+            } catch (error) {
+                return writeJson(response, 500, { error: error.message });
+            }
+        }
+
+        return writeJson(response, 404, { error: 'Not Found' });
     });
-  });
-}
-
-export async function handleApiRequest({ runtime, request, response }) {
-  const url = new URL(request.url, `http://${request.headers.host ?? 'localhost'}`);
-
-  if (request.method === 'GET' && url.pathname === API_ROUTES.HEALTH) {
-    return writeJson(response, 200, runtime.getHealth());
-  }
-
-  if (request.method === 'GET' && url.pathname === API_ROUTES.INCIDENTS) {
-    return writeJson(response, 200, { items: runtime.incidentStore.getIncidents() });
-  }
-
-  if (request.method === 'GET' && url.pathname === API_ROUTES.ALERTS) {
-    return writeJson(response, 200, { items: runtime.incidentStore.getAlerts() });
-  }
-
-  if (request.method === 'GET' && url.pathname === API_ROUTES.QUARANTINE_JOBS) {
-    return writeJson(response, 200, { items: runtime.incidentStore.getQuarantineJobs() });
-  }
-
-  if (request.method === 'GET' && url.pathname === API_ROUTES.SNAPSHOT) {
-    return writeJson(response, 200, runtime.getSnapshot());
-  }
-
-  if (request.method === 'POST' && url.pathname === API_ROUTES.DEMO_START) {
-    return writeJson(response, 200, await runtime.enableDemoMode());
-  }
-
-  if (request.method === 'POST' && url.pathname === API_ROUTES.DEMO_STOP) {
-    return writeJson(response, 200, await runtime.disableDemoMode());
-  }
-
-  if (request.method === 'POST' && url.pathname === API_ROUTES.WATCH_TARGET) {
-    const payload = await readJsonBody(request);
-
-    if (!payload?.targetPath || typeof payload.targetPath !== 'string') {
-      throw createBadRequest('targetPath is required');
-    }
-
-    return writeJson(response, 200, await runtime.setTargetPath(payload.targetPath));
-  }
-
-  const restoreMatch = request.method === 'POST' &&
-    url.pathname.match(/^\/api\/incidents\/([^/]+)\/restore$/);
-
-  if (restoreMatch) {
-    const incidentId = restoreMatch[1];
-    return writeJson(response, 200, await runtime.restoreIncident(incidentId));
-  }
-
-  return writeJson(response, 404, {
-    error: 'Not Found',
-    routes: Object.values(API_ROUTES)
-  });
-}
-
-async function readJsonBody(request) {
-  const chunks = [];
-
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-
-  if (chunks.length === 0) {
-    return {};
-  }
-
-  const body = Buffer.concat(chunks).toString('utf8').trim();
-  if (!body) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(body);
-  } catch {
-    throw createBadRequest('Request body must be valid JSON');
-  }
-}
-
-function createBadRequest(message) {
-  const error = new Error(message);
-  error.statusCode = 400;
-  return error;
 }
 
 function writeJson(response, statusCode, payload) {
-  response.writeHead(statusCode, {
-    'Content-Type': 'application/json; charset=utf-8'
-  });
-  response.end(JSON.stringify(payload, null, 2));
+    response.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
+    response.end(JSON.stringify(payload, null, 2));
 }
