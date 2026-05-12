@@ -55,6 +55,14 @@ export async function handleApiRequest({ runtime, request, response }) {
     return writeJson(response, 200, await runtime.setTargetPath(payload.targetPath));
   }
 
+  const restoreMatch = request.method === 'POST' &&
+    url.pathname.match(/^\/api\/incidents\/([^/]+)\/restore$/);
+
+  if (restoreMatch) {
+    const incidentId = restoreMatch[1];
+    return writeJson(response, 200, await runtime.restoreIncident(incidentId));
+  }
+
   return writeJson(response, 404, {
     error: 'Not Found',
     routes: Object.values(API_ROUTES)
