@@ -27,11 +27,22 @@ export class IncidentStore {
     this.activeIncidentIdsByTarget = new Map();
 
     this.handleRuleMatch = this.handleRuleMatch.bind(this);
+    this.handleRestoreCompleted = this.handleRestoreCompleted.bind(this);
     this.eventBus.on(EVENT_NAMES.RULE_MATCH, this.handleRuleMatch);
+    this.eventBus.on(EVENT_NAMES.RESTORE_COMPLETED, this.handleRestoreCompleted);
   }
 
   stop() {
     this.eventBus.off(EVENT_NAMES.RULE_MATCH, this.handleRuleMatch);
+    this.eventBus.off(EVENT_NAMES.RESTORE_COMPLETED, this.handleRestoreCompleted);
+  }
+
+  handleRestoreCompleted({ incidentId }) {
+    const incident = this.incidents.find(i => i.id === incidentId);
+    if (incident) {
+      incident.status = INCIDENT_STATUSES.RESTORED;
+      incident.updatedAt = new Date().toISOString();
+    }
   }
 
   getIncidents() {

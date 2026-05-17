@@ -23,7 +23,7 @@ function formatTime(isoString) {
     return isoString.replace('T', ' ').substring(0, 19);
 }
 
-export async function startAttack() {
+export async function startAttack(onEvent = null) {
     if (!fs.existsSync(TARGET_DIR)) {
         fs.mkdirSync(TARGET_DIR, { recursive: true });
     }
@@ -55,7 +55,9 @@ export async function startAttack() {
 
             const encoded = Buffer.from(originalContent).toString('base64');
             fs.writeFileSync(filePath, encoded);
+            onEvent?.('modify', filePath);
             fs.renameSync(filePath, lockedPath);
+            onEvent?.('create', lockedPath);
 
             const now = new Date().toISOString();
             console.log(`${formatTime(now)} - file_${i}.txt 변조됨 (${i}/15)`);
