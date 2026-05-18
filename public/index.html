@@ -19,12 +19,12 @@
     <div class="main-content">
         <header>
             <div class="status-group">
-                <span id="status-dot" class="dot"></span>
+                <span id="status-dot" class="dot offline"></span>
                 <span id="server-status-text">서버 연결 중...</span>
             </div>
             <div class="controls">
-                <button id="btn-demo-start" class="btn-primary">데모 시작</button>
-                <button id="btn-demo-stop" class="btn-secondary">데모 중지</button>
+                <button id="btn-demo-start" class="btn-primary" onclick="handleDemoStart()">데모 시작</button>
+                <button id="btn-demo-stop" class="btn-secondary" onclick="handleDemoStop()">데모 중지</button>
             </div>
         </header>
 
@@ -41,8 +41,7 @@
 
         <section class="card">
             <h3>실시간 파일 이벤트 로그</h3>
-            <div id="log-container" class="log-viewer">
-                </div>
+            <div id="log-container" class="log-viewer"></div>
         </section>
 
         <section class="card">
@@ -57,8 +56,7 @@
                         <th>액션</th>
                     </tr>
                 </thead>
-                <tbody id="quarantine-list">
-                    </tbody>
+                <tbody id="quarantine-list"></tbody>
             </table>
         </section>
     </div>
