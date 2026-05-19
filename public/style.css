@@ -1,0 +1,44 @@
+:root {
+    --bg-color: #0f172a;
+    --card-bg: #1e293b;
+    --text-main: #f8fafc;
+    --accent: #38bdf8;
+    --danger: #ef4444;
+    --success: #22c55e;
+}
+
+body {
+    background: var(--bg-color);
+    color: var(--text-main);
+    font-family: 'Pretendard', sans-serif;
+    display: flex;
+    margin: 0;
+}
+
+/* Sidebar & Grid 생략 - 가독성을 위한 레이아웃 중심 */
+.log-viewer {
+    height: 200px;
+    overflow-y: auto;
+    background: #000;
+    padding: 10px;
+    border-radius: 8px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9rem;
+}
+
+.log-entry { margin-bottom: 6px; border-left: 3px solid var(--accent); padding-left: 8px; word-break: break-all; white-space: normal; line-height: 1.5; }
+.log-entry.DELETE { border-color: var(--danger); }
+.log-entry.CREATE { border-color: var(--success); }
+
+.data-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+.data-table th { text-align: left; padding: 12px; border-bottom: 1px solid #334155; }
+.data-table td { padding: 12px; border-bottom: 1px solid #334155; }
+
+.btn-restore {
+    background: var(--accent);
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+}

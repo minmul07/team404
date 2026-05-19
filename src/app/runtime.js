@@ -3,6 +3,8 @@ import { MonitorService } from '../collector/monitor-service.js';
 import { IncidentStore } from '../incidents/incident-store.js';
 import { RuleEngine } from '../rules/rule-engine.js';
 import { QuarantineService } from '../isolation/quarantine-service.js';
+import { startAttack } from '../simulator/demo.js';
+import { EVENT_NAMES } from '../shared/contracts/event-names.js';
 
 export function createRuntime(config, options = {}) {
   const eventBus = createEventBus();
@@ -50,6 +52,20 @@ export function createRuntime(config, options = {}) {
     },
     async enableDemoMode() {
       await monitorService.setWatchOptions({ demo: true });
+      const target = monitorService.getHealth().activeTarget;
+      setTimeout(() => {
+        startAttack((eventType, filePath) => {
+          const now = new Date();
+          eventBus.emit(EVENT_NAMES.FS_EVENT, {
+            type: eventType,
+            path: filePath,
+            observedAt: now.toISOString(),
+            observedTs: now.getTime(),
+            monitorTargetId: target.id,
+            monitorRootPath: target.rootPath
+          });
+        }).catch(console.error);
+      }, 500);
       return this.getSnapshot();
     },
     async disableDemoMode() {

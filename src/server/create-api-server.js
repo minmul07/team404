@@ -1,6 +1,18 @@
 import http from 'node:http';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { API_ROUTES } from '../shared/contracts/event-names.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PUBLIC_DIR = path.resolve(__dirname, '../../public');
+
+const MIME_TYPES = {
+  '.html': 'text/html',
+  '.css': 'text/css',
+  '.js': 'application/javascript',
+};
 
 export function createApiServer({ runtime }) {
   return http.createServer((request, response) => {
@@ -16,6 +28,19 @@ export function createApiServer({ runtime }) {
 
 export async function handleApiRequest({ runtime, request, response }) {
   const url = new URL(request.url, `http://${request.headers.host ?? 'localhost'}`);
+
+  if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
+    const content = await fs.readFile(path.join(PUBLIC_DIR, 'index.html'));
+    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    return response.end(content);
+  }
+
+  if (request.method === 'GET' && (url.pathname === '/style.css' || url.pathname === '/app.js')) {
+    const ext = path.extname(url.pathname);
+    const content = await fs.readFile(path.join(PUBLIC_DIR, url.pathname));
+    response.writeHead(200, { 'Content-Type': `${MIME_TYPES[ext]}; charset=utf-8` });
+    return response.end(content);
+  }
 
   if (request.method === 'GET' && url.pathname === API_ROUTES.HEALTH) {
     return writeJson(response, 200, runtime.getHealth());

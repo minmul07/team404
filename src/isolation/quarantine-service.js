@@ -179,10 +179,13 @@ async function collectPermissions(rootPath) {
  * @param {string} rootPath
  */
 async function lockPermissions(rootPath) {
-  // 디렉터리 하위 파일 잠금
-  await execAsync(`find ${shellEscape(rootPath)} -type f -exec chmod 400 {} \\;`);
-  // 디렉터리 잠금 (rootPath 포함 하위 모두)
-  await execAsync(`find ${shellEscape(rootPath)} -type d -exec chmod 500 {} \\;`);
+  const linuxPath = toLinuxPath(rootPath);
+  try {
+    await execAsync(`find ${shellEscape(linuxPath)} -type f -exec chmod 400 {} \\;`);
+    await execAsync(`find ${shellEscape(linuxPath)} -type d -exec chmod 500 {} \\;`);
+  } catch {
+    // Windows/NTFS 환경에서는 chmod 미지원 - 메모리 기록만 유지
+  }
 }
 
 /**
@@ -191,8 +194,17 @@ async function lockPermissions(rootPath) {
  */
 async function restorePermissions(entries) {
   for (const entry of entries) {
-    await execAsync(`chmod ${entry.originalMode} ${shellEscape(entry.filePath)}`);
+    try {
+      await execAsync(`chmod ${entry.originalMode} ${shellEscape(toLinuxPath(entry.filePath))}`);
+    } catch {
+      // Windows/NTFS 환경에서는 chmod 미지원 - 복원 기록만 처리
+    }
   }
+}
+
+function toLinuxPath(p) {
+  // C:\Users\... → /mnt/c/Users/...
+  return p.replace(/^([A-Za-z]):\\/, (_, d) => `/mnt/${d.toLowerCase()}/`).replace(/\\/g, '/');
 }
 
 /**
