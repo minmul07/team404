@@ -1,8 +1,6 @@
 export function parseRuntimeOptions(args) {
   const options = {
-    configPath: undefined,
-    withoutDashboard: false,
-    demo: false
+    configPath: undefined
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -14,17 +12,12 @@ export function parseRuntimeOptions(args) {
       continue;
     }
 
-    if (arg === '--without-dashboard') {
-      options.withoutDashboard = true;
+    if (arg.startsWith('--')) {
+      console.warn(`Unknown argument: ${arg}`);
       continue;
     }
 
-    if (arg === '--demo') {
-      options.demo = true;
-      continue;
-    }
-
-    throw new Error(`Unknown argument: ${arg}`);
+    console.warn(`Unknown argument: ${arg}`);
   }
 
   return options;

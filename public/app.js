@@ -1,19 +1,28 @@
 const API_URL = '/api';
+const VIEW_COPY = {
+  dashboard: {
+    title: '대시보드',
+    subtitle: '파일 이벤트와 격리 상태를 실시간으로 확인합니다.'
+  },
+  rules: {
+    title: '탐지 규칙',
+    subtitle: '규칙 편집 화면이 연결되기 전까지 비어있는 상태로 유지됩니다.'
+  },
+  settings: {
+    title: '설정',
+    subtitle: '운영 설정 화면이 연결되기 전까지 비어있는 상태로 유지됩니다.'
+  }
+};
+
 const socketProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
 const socket = new WebSocket(`${socketProtocol}://${window.location.host}`);
 
 socket.onopen = () => {
-  const dot = document.getElementById('status-dot');
-  const text = document.getElementById('server-status-text');
-  if (dot) dot.className = 'dot online';
-  if (text) text.innerText = '서버 연결됨 (운영 중)';
+  setServerStatus('online', '서버 연결됨 (운영 중)');
 };
 
 socket.onclose = () => {
-  const dot = document.getElementById('status-dot');
-  const text = document.getElementById('server-status-text');
-  if (dot) dot.className = 'dot offline';
-  if (text) text.innerText = '서버 연결 끊김';
+  setServerStatus('offline', '서버 연결 끊김');
 };
 
 socket.onmessage = (event) => {
@@ -23,11 +32,20 @@ socket.onmessage = (event) => {
       addLogEntry(msg.payload);
       break;
     case 'QUARANTINE_COMPLETED':
+    case 'RESTORE_COMPLETED':
+    case 'RULE_MATCH':
+    case 'SYSTEM_HEALTH':
       loadState();
-      console.log('새로운 파일 격리됨!');
       break;
   }
 };
+
+function setServerStatus(status, label) {
+  const dot = document.getElementById('status-dot');
+  const text = document.getElementById('server-status-text');
+  if (dot) dot.className = `dot ${status}`;
+  if (text) text.innerText = label;
+}
 
 async function loadState() {
   try {
@@ -41,10 +59,9 @@ async function loadState() {
     const incidents = await incidentsRes.json();
 
     const target = snapshot.activeTarget;
-    document.getElementById('target-path').innerText =
-      (target?.rootPath ?? target) || '없음';
+    const targetPath = (target?.rootPath ?? target) || '없음';
+    document.getElementById('target-path').innerText = targetPath;
     updateQuarantineTable(snapshot.quarantineJobs ?? []);
-    updateQuarantineTable_bjh(snapshot.quarantineJobs ?? []);
     updateLog(alerts.items ?? [], incidents.items ?? []);
   } catch (err) {
     console.error('데이터 로드 실패', err);
@@ -119,10 +136,12 @@ async function handleDemoStop() {
   }
 }
 
-async function handleRestore(incidentId) {
-  const btn = event.target;
-  btn.disabled = true;
-  btn.innerText = '복원 중...';
+async function handleRestore(incidentId, btn) {
+  const originalText = btn?.innerText ?? '복구';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerText = '복원 중...';
+  }
 
   try {
     const response = await fetch(`${API_URL}/incidents/${incidentId}/restore`, {
@@ -130,123 +149,116 @@ async function handleRestore(incidentId) {
     });
 
     if (response.ok) {
-      alert('권한 복원이 완료되었습니다.');
-      loadState();
+      showNotification('권한 복원이 완료되었습니다.');
+      await loadState();
     } else {
       const error = await response.json();
       alert(`오류: ${error.error}`);
     }
   } catch (err) {
+    console.error(err);
     alert('복원 요청 중 네트워크 오류가 발생했습니다.');
   } finally {
-    btn.disabled = false;
-    btn.innerText = '복구';
+    if (btn) {
+      btn.disabled = false;
+      btn.innerText = originalText;
+    }
   }
 }
 
-document.getElementById('btn-demo-start')?.addEventListener('click', handleDemoStart);
-document.getElementById('btn-demo-stop')?.addEventListener('click', handleDemoStop);
-
 function updateQuarantineTable(jobs) {
   const list = document.getElementById('quarantine-list');
-  document.getElementById('quarantine-count').innerText = jobs.length;
-
-  list.innerHTML = jobs.map(job => `
-    <tr>
-      <td>${job.incidentId.substring(0, 8)}...</td>
-      <td title="${job.rootPath}">${job.rootPath}</td>
-      <td>${job.entryCount}개</td>
-      <td><span class="badge danger">격리(400/500)</span></td>
-      <td><button class="btn-restore" onclick="handleRestore('${job.incidentId}')">복구</button></td>
-    </tr>
-  `).join('');
-}
-
-function updateQuarantineTable_bjh(jobs) {
-  const list = document.getElementById('quarantine-list-bjh');
+  const count = document.getElementById('quarantine-count');
+  if (count) count.innerText = jobs.length;
   if (!list) return;
-  document.getElementById('quarantine-count-bjh').innerText = jobs.length;
+
+  if (jobs.length === 0) {
+    list.innerHTML = `
+      <tr>
+        <td class="empty-row" colspan="5">격리 중인 Incident가 없습니다.</td>
+      </tr>
+    `;
+    return;
+  }
+
   list.innerHTML = jobs.map(job => `
     <tr>
-      <td>${job.incidentId.substring(0, 8)}...</td>
-      <td title="${job.rootPath}">${job.rootPath}</td>
-      <td>${job.entryCount}개</td>
+      <td>${escapeHtml(job.incidentId.substring(0, 8))}...</td>
+      <td class="path-cell" title="${escapeHtml(job.rootPath)}">${escapeHtml(job.rootPath)}</td>
+      <td>${Number(job.entryCount) || 0}개</td>
       <td><span class="badge danger">격리(400/500)</span></td>
-      <td><button class="btn-restore" onclick="handleRestore('${job.incidentId}')">복구</button></td>
+      <td>
+        <button class="btn-restore" type="button" data-incident-id="${escapeHtml(job.incidentId)}">복구</button>
+      </td>
     </tr>
   `).join('');
 }
 
 function updateLog(alerts, incidents = []) {
   const container = document.getElementById('log-container');
-  if (alerts.length === 0 && incidents.filter(i => i.status === 'restored').length === 0) {
-    container.innerHTML = '<div style="color:#475569;padding:8px 0;font-style:italic">대기 중 — 이벤트 없음</div>';
+  if (!container) return;
+
+  const restoredIncidents = incidents.filter(i => i.status === 'restored');
+  if (alerts.length === 0 && restoredIncidents.length === 0) {
+    container.innerHTML = '<div class="empty-state">대기 중 - 이벤트 없음</div>';
     return;
   }
 
-  const restoreEntries = incidents
-    .filter(i => i.status === 'restored')
-    .map(i => ({
-      _type: 'restore',
-      observedAt: i.updatedAt,
-      rootPath: i.monitorRootPath,
-      samplePaths: i.samplePaths ?? []
-    }));
+  const restoreEntries = restoredIncidents.map(i => ({
+    _type: 'restore',
+    observedAt: i.updatedAt,
+    rootPath: i.monitorRootPath,
+    samplePaths: i.samplePaths ?? []
+  }));
 
   const allEntries = [
     ...alerts.map(a => ({ _type: 'alert', ...a })),
     ...restoreEntries
   ].sort((a, b) => new Date(b.observedAt) - new Date(a.observedAt)).slice(0, 20);
 
-  const entries = [];
-  for (const entry of allEntries) {
+  container.innerHTML = allEntries.map((entry) => {
     if (entry._type === 'restore') {
-      const time = new Date(entry.observedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      const files = (entry.samplePaths ?? [])
-        .map(p => p.replace(/\\/g, '/').split('/').pop().replace('.demo.locked', ''))
-        .filter((v, i, a) => a.indexOf(v) === i)
-        .slice(0, 5);
-      entries.push(`
-        <div style="margin-bottom:10px;padding:8px 10px;background:#0f172a;border-radius:6px;border-left:3px solid #22c55e">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
-            <span style="color:#64748b;font-size:0.78em;font-family:monospace">${time}</span>
-            <span style="background:#052e16;color:#22c55e;font-size:0.72em;font-weight:700;padding:1px 6px;border-radius:3px;letter-spacing:0.05em">RESTORED</span>
-            <span style="color:#22c55e;font-weight:700;font-size:0.82em">권한 복원 완료</span>
-          </div>
-          <div style="display:flex;flex-wrap:wrap;gap:4px">
-            ${files.map(f => `<span style="background:#1e293b;color:#cbd5e1;font-size:0.75em;padding:2px 7px;border-radius:4px;font-family:monospace">${f}</span>`).join('')}
-          </div>
-        </div>`);
-      continue;
+      return renderRestoreEntry(entry);
     }
-    const alert = entry;
-    const time = new Date(alert.observedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    const type = alert.eventType?.toUpperCase() ?? 'MATCH';
-    const severity = alert.severity?.toUpperCase() ?? 'HIGH';
-    const files = (alert.samplePaths ?? [])
-      .map(p => p.replace(/\\/g, '/').split('/').pop().replace('.demo.locked', ''))
-      .filter((v, i, a) => a.indexOf(v) === i)
-      .slice(0, 5);
+    return renderAlertEntry(entry);
+  }).join('');
+}
 
-    const typeColor = type === 'MODIFY' ? '#ef4444' : type === 'CREATE' ? '#f97316' : '#a855f7';
-    const sevColor = severity === 'CRITICAL' ? '#dc2626' : severity === 'HIGH' ? '#ea580c' : '#ca8a04';
-    const sevBg = severity === 'CRITICAL' ? '#450a0a' : severity === 'HIGH' ? '#431407' : '#422006';
+function renderRestoreEntry(entry) {
+  const time = formatTime(entry.observedAt);
+  const files = extractFileNames(entry.samplePaths);
+  return `
+    <div class="log-entry restore">
+      <div class="log-meta">
+        <span class="log-time">${time}</span>
+        <span class="severity low">RESTORED</span>
+        <span class="log-type">권한 복원 완료</span>
+      </div>
+      ${renderFileChips(files)}
+    </div>
+  `;
+}
 
-    entries.push(`
-      <div style="margin-bottom:10px;padding:8px 10px;background:#0f172a;border-radius:6px;border-left:3px solid ${typeColor}">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
-          <span style="color:#64748b;font-size:0.78em;font-family:monospace">${time}</span>
-          <span style="background:${sevBg};color:${sevColor};font-size:0.72em;font-weight:700;padding:1px 6px;border-radius:3px;letter-spacing:0.05em">${severity}</span>
-          <span style="color:${typeColor};font-weight:700;font-size:0.82em">${type}</span>
-          <span style="color:#94a3b8;font-size:0.82em">${alert.ruleName ?? ''}</span>
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:4px">
-          ${files.map(f => `<span style="background:#1e293b;color:#cbd5e1;font-size:0.75em;padding:2px 7px;border-radius:4px;font-family:monospace">${f}</span>`).join('')}
-        </div>
-        <div style="color:#475569;font-size:0.72em;margin-top:4px">${alert.reason ?? ''}</div>
-      </div>`);
-  }
-  container.innerHTML = entries.join('');
+function renderAlertEntry(alert) {
+  const time = formatTime(alert.observedAt);
+  const type = alert.eventType?.toUpperCase() ?? 'MATCH';
+  const severity = alert.severity?.toUpperCase() ?? 'HIGH';
+  const typeClass = `alert-${type.toLowerCase()}`;
+  const severityClass = severity.toLowerCase();
+  const files = extractFileNames(alert.samplePaths);
+
+  return `
+    <div class="log-entry ${typeClass}">
+      <div class="log-meta">
+        <span class="log-time">${time}</span>
+        <span class="severity ${escapeHtml(severityClass)}">${escapeHtml(severity)}</span>
+        <span class="log-type">${escapeHtml(type)}</span>
+        <span class="log-rule">${escapeHtml(alert.ruleName ?? '')}</span>
+      </div>
+      ${renderFileChips(files)}
+      <div class="log-reason">${escapeHtml(alert.reason ?? '')}</div>
+    </div>
+  `;
 }
 
 function addLogEntry(payload) {
@@ -254,8 +266,32 @@ function addLogEntry(payload) {
   if (!container) return;
   const div = document.createElement('div');
   div.className = `log-entry ${payload.type}`;
-  div.innerHTML = `<strong>[${payload.type}]</strong> ${payload.path} (PID: ${payload.pid})`;
+  div.innerHTML = `<strong>[${escapeHtml(payload.type)}]</strong> ${escapeHtml(payload.path)} (PID: ${escapeHtml(String(payload.pid ?? '-'))})`;
   container.prepend(div);
+}
+
+function renderFileChips(files) {
+  if (files.length === 0) return '';
+  return `
+    <div class="file-list">
+      ${files.map(f => `<span class="file-chip">${escapeHtml(f)}</span>`).join('')}
+    </div>
+  `;
+}
+
+function extractFileNames(paths = []) {
+  return paths
+    .map(p => String(p).replace(/\\/g, '/').split('/').pop().replace('.demo.locked', ''))
+    .filter((value, index, all) => value && all.indexOf(value) === index)
+    .slice(0, 5);
+}
+
+function formatTime(value) {
+  return new Date(value).toLocaleTimeString('ko-KR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
 }
 
 function showNotification(msg) {
@@ -269,19 +305,57 @@ function showNotification(msg) {
 async function checkHealth() {
   try {
     await fetch(`${API_URL}/health`);
-    const dot = document.getElementById('status-dot');
     const text = document.getElementById('server-status-text');
-    if (dot && !dot.classList.contains('online')) dot.style.backgroundColor = '#4caf50';
-    if (text && text.innerText === '서버 연결 중...') text.innerText = '서버 연결됨';
+    if (text && text.innerText === '서버 연결 중...') {
+      setServerStatus('online', '서버 연결됨');
+    }
   } catch {
-    const dot = document.getElementById('status-dot');
-    const text = document.getElementById('server-status-text');
-    if (dot && !dot.classList.contains('offline')) dot.style.backgroundColor = '#f44336';
-    if (text) text.innerText = '서버 연결 끊김';
+    setServerStatus('offline', '서버 연결 끊김');
   }
 }
 
-loadState();
+function switchView(viewName) {
+  const view = VIEW_COPY[viewName] ? viewName : 'dashboard';
+  document.querySelectorAll('[data-view]').forEach((item) => {
+    const active = item.dataset.view === view;
+    item.classList.toggle('active', active);
+    item.setAttribute('aria-selected', String(active));
+  });
+  document.querySelectorAll('[data-view-panel]').forEach((panel) => {
+    panel.hidden = panel.dataset.viewPanel !== view;
+    panel.classList.toggle('active', panel.dataset.viewPanel === view);
+  });
+
+  const copy = VIEW_COPY[view];
+  document.getElementById('view-title').innerText = copy.title;
+  document.getElementById('view-subtitle').innerText = copy.subtitle;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+document.getElementById('btn-demo-start')?.addEventListener('click', handleDemoStart);
+document.getElementById('btn-demo-stop')?.addEventListener('click', handleDemoStop);
+
+document.querySelector('.menu')?.addEventListener('click', (event) => {
+  const item = event.target.closest('[data-view]');
+  if (!item) return;
+  switchView(item.dataset.view);
+});
+
+document.getElementById('quarantine-list')?.addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-incident-id]');
+  if (!btn) return;
+  handleRestore(btn.dataset.incidentId, btn);
+});
+
+loadInitialState();
 checkHealth();
 setInterval(loadState, 3000);
 setInterval(checkHealth, 5000);

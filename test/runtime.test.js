@@ -49,6 +49,7 @@ test('createRuntime starts in demo mode when watchOptions.demo is enabled', () =
   });
 
   const health = runtime.getHealth();
+  assert.equal(health.status, 'idle');
   assert.equal(health.activeMode, 'demo');
   assert.equal(health.activeTarget.id, 'demo-target');
   assert.equal(health.activeTarget.rootPath, DEMO_TARGET_ROOT);

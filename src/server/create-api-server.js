@@ -1,8 +1,9 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { API_ROUTES } from '../shared/contracts/event-names.js';
+import { API_ROUTES, EVENT_NAMES } from '../shared/contracts/event-names.js';
 
 const PORT = 3000;
 const HOST = '0.0.0.0';
@@ -16,7 +17,7 @@ const MIME_TYPES = {
 };
 
 export function createApiServer({ runtime }) {
-  return http.createServer((request, response) => {
+  const server = http.createServer((request, response) => {
     handleApiRequest({ runtime, request, response }).catch((error) => {
       const statusCode = error.statusCode ?? 500;
       writeJson(response, statusCode, {
@@ -25,6 +26,9 @@ export function createApiServer({ runtime }) {
       });
     });
   });
+
+  attachDashboardWebSocket({ server, runtime });
+  return server;
 }
 
 export function createServer(runtime) {
@@ -131,6 +135,132 @@ function createBadRequest(message) {
 function writeJson(response, statusCode, payload) {
   response.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
   response.end(JSON.stringify(payload, null, 2));
+}
+
+function attachDashboardWebSocket({ server, runtime }) {
+  const clients = new Set();
+  const listeners = [
+    [EVENT_NAMES.FS_EVENT, (payload) => broadcast({ type: 'FILE_EVENT', payload })],
+    [EVENT_NAMES.QUARANTINE_COMPLETED, (payload) => broadcast({ type: 'QUARANTINE_COMPLETED', payload })],
+    [EVENT_NAMES.RESTORE_COMPLETED, (payload) => broadcast({ type: 'RESTORE_COMPLETED', payload })],
+    [EVENT_NAMES.RULE_MATCH, (payload) => broadcast({ type: 'RULE_MATCH', payload })],
+    [EVENT_NAMES.SYSTEM_HEALTH, (payload) => broadcast({ type: 'SYSTEM_HEALTH', payload })]
+  ];
+
+  for (const [eventName, listener] of listeners) {
+    runtime.eventBus?.on(eventName, listener);
+  }
+
+  server.on('upgrade', (request, socket) => {
+    if (!isDashboardWebSocketRequest(request)) {
+      socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    const acceptKey = createWebSocketAcceptKey(request.headers['sec-websocket-key']);
+    if (!acceptKey) {
+      socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    socket.write([
+      'HTTP/1.1 101 Switching Protocols',
+      'Upgrade: websocket',
+      'Connection: Upgrade',
+      `Sec-WebSocket-Accept: ${acceptKey}`,
+      '\r\n'
+    ].join('\r\n'));
+
+    clients.add(socket);
+
+    const cleanup = () => {
+      clients.delete(socket);
+    };
+
+    socket.on('close', cleanup);
+    socket.on('end', cleanup);
+    socket.on('error', cleanup);
+    socket.on('data', (chunk) => {
+      if ((chunk[0] & 0x0f) === 0x08) {
+        socket.end();
+      }
+    });
+    send(socket, {
+      type: 'CONNECTED',
+      payload: runtime.getHealth?.() ?? { status: 'running' }
+    });
+  });
+
+  server.on('close', () => {
+    for (const [eventName, listener] of listeners) {
+      runtime.eventBus?.off(eventName, listener);
+    }
+    for (const client of clients) {
+      client.end();
+    }
+    clients.clear();
+  });
+
+  function broadcast(message) {
+    for (const client of clients) {
+      send(client, message);
+    }
+  }
+}
+
+function isDashboardWebSocketRequest(request) {
+  const url = new URL(request.url, `http://${request.headers.host ?? 'localhost'}`);
+  const upgrade = request.headers.upgrade?.toLowerCase();
+
+  return request.method === 'GET' &&
+    upgrade === 'websocket' &&
+    (url.pathname === '/' || url.pathname === '/ws');
+}
+
+function createWebSocketAcceptKey(clientKey) {
+  if (typeof clientKey !== 'string' || clientKey.trim() === '') {
+    return null;
+  }
+
+  return crypto
+    .createHash('sha1')
+    .update(`${clientKey}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+    .digest('base64');
+}
+
+function send(socket, message) {
+  if (socket.destroyed || socket.writableEnded) {
+    return;
+  }
+
+  socket.write(encodeWebSocketTextFrame(JSON.stringify(message)));
+}
+
+function encodeWebSocketTextFrame(text) {
+  const payload = Buffer.from(text, 'utf8');
+
+  if (payload.length < 126) {
+    return Buffer.concat([
+      Buffer.from([0x81, payload.length]),
+      payload
+    ]);
+  }
+
+  if (payload.length <= 0xffff) {
+    const header = Buffer.alloc(4);
+    header[0] = 0x81;
+    header[1] = 126;
+    header.writeUInt16BE(payload.length, 2);
+    return Buffer.concat([header, payload]);
+  }
+
+  const header = Buffer.alloc(10);
+  header[0] = 0x81;
+  header[1] = 127;
+  header.writeBigUInt64BE(BigInt(payload.length), 2);
+  return Buffer.concat([header, payload]);
 }
 
 export { PORT, HOST };

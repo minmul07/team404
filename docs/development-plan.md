@@ -161,7 +161,7 @@
 
 # 📌 예상 최종 시연 흐름
 
-1. npm run dev -- --demo 실행
+1. npm run dev 실행
 2. demo-target 디렉터리 감시 시작
 3. 랜섬웨어 유사 행위 발생
 4. monitor.sh 이벤트 감지
