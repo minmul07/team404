@@ -105,9 +105,30 @@ export function createRuntime(config, options = {}) {
         alerts: incidentStore.getAlerts(),
         quarantineJobs: quarantineService.getQuarantineJobs()
       };
-    },                          // ← 콤마 추가
+    },
     async restoreIncident(incidentId) {
       return quarantineService.restore(incidentId);
+    }
+  };
+}
+
+export function createDemoRuntime() {
+  return {
+    async getSnapshot() {
+      return {
+        activeTarget: '/home/bangjyuhyeon/team404/test_folder',
+        quarantineJobs: [
+          {
+            incidentId: 'demo-incident-001',
+            rootPath: '/etc/passwd_backup',
+            entryCount: 5
+          }
+        ]
+      };
+    },
+    async restoreIncident(id) {
+      console.log(`[INFO] Incident ${id} restored.`);
+      return { success: true };
     }
   };
 }

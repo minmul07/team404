@@ -2,9 +2,10 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-
 import { API_ROUTES } from '../shared/contracts/event-names.js';
 
+const PORT = 3000;
+const HOST = '0.0.0.0';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, '../../public');
 
@@ -24,6 +25,10 @@ export function createApiServer({ runtime }) {
       });
     });
   });
+}
+
+export function createServer(runtime) {
+  return createApiServer({ runtime });
 }
 
 export async function handleApiRequest({ runtime, request, response }) {
@@ -124,8 +129,8 @@ function createBadRequest(message) {
 }
 
 function writeJson(response, statusCode, payload) {
-  response.writeHead(statusCode, {
-    'Content-Type': 'application/json; charset=utf-8'
-  });
+  response.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
   response.end(JSON.stringify(payload, null, 2));
 }
+
+export { PORT, HOST };

@@ -19,7 +19,7 @@
     <div class="main-content">
         <header>
             <div class="status-group">
-                <span id="status-dot" class="dot"></span>
+                <span id="status-dot" class="dot offline"></span>
                 <span id="server-status-text">서버 연결 중...</span>
             </div>
             <div class="controls">
@@ -41,8 +41,7 @@
 
         <section class="card">
             <h3>실시간 파일 이벤트 로그</h3>
-            <div id="log-container" class="log-viewer">
-                </div>
+            <div id="log-container" class="log-viewer"></div>
         </section>
 
         <section class="card">
@@ -57,8 +56,24 @@
                         <th>액션</th>
                     </tr>
                 </thead>
-                <tbody id="quarantine-list">
-                    </tbody>
+                <tbody id="quarantine-list"></tbody>
+            </table>
+        </section>
+
+        <section class="card">
+            <h3>Incident 및 격리 관리 (bjh)</h3>
+            <div class="visually-hidden" id="quarantine-count-bjh">0</div>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>대상 경로</th>
+                        <th>항목 수</th>
+                        <th>상태</th>
+                        <th>액션</th>
+                    </tr>
+                </thead>
+                <tbody id="quarantine-list-bjh"></tbody>
             </table>
         </section>
     </div>

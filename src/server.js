@@ -1,4 +1,6 @@
 import { once } from 'node:events';
+import http from 'node:http';
+import fs from 'node:fs/promises';
 
 import { attachConsoleEventLogger } from './app/console-event-logger.js';
 import { parseRuntimeOptions } from './app/runtime-options.js';
@@ -74,4 +76,38 @@ function registerShutdownHandlers({ onShutdown }) {
       process.exit(0);
     });
   }
+}
+
+export function createStandaloneDemoServer() {
+  const runtime = {
+    async getSnapshot() {
+      return {
+        activeTarget: '/home/bangjyuhyeon/team404',
+        quarantineJobs: [{ incidentId: 'demo-001', rootPath: '/test', entryCount: 1 }]
+      };
+    }
+  };
+
+  return http.createServer(async (request, response) => {
+    const url = new URL(request.url, `http://${request.headers.host}`);
+
+    let filePath = '';
+    if (url.pathname === '/' || url.pathname === '/index.html') filePath = './public/index.html';
+    else if (url.pathname === '/style.css') filePath = './public/style.css';
+    else if (url.pathname === '/app.js') filePath = './public/app.js';
+
+    if (filePath) {
+      try {
+        const content = await fs.readFile(filePath);
+        response.end(content);
+        return;
+      } catch (e) { }
+    }
+
+    if (url.pathname === '/api/snapshot') {
+      const data = await runtime.getSnapshot();
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify(data));
+    }
+  });
 }

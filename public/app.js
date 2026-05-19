@@ -1,4 +1,33 @@
 const API_URL = '/api';
+const socketProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+const socket = new WebSocket(`${socketProtocol}://${window.location.host}`);
+
+socket.onopen = () => {
+  const dot = document.getElementById('status-dot');
+  const text = document.getElementById('server-status-text');
+  if (dot) dot.className = 'dot online';
+  if (text) text.innerText = '서버 연결됨 (운영 중)';
+};
+
+socket.onclose = () => {
+  const dot = document.getElementById('status-dot');
+  const text = document.getElementById('server-status-text');
+  if (dot) dot.className = 'dot offline';
+  if (text) text.innerText = '서버 연결 끊김';
+};
+
+socket.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  switch (msg.type) {
+    case 'FILE_EVENT':
+      addLogEntry(msg.payload);
+      break;
+    case 'QUARANTINE_COMPLETED':
+      loadState();
+      console.log('새로운 파일 격리됨!');
+      break;
+  }
+};
 
 async function loadState() {
   try {
@@ -15,9 +44,78 @@ async function loadState() {
     document.getElementById('target-path').innerText =
       (target?.rootPath ?? target) || '없음';
     updateQuarantineTable(snapshot.quarantineJobs ?? []);
+    updateQuarantineTable_bjh(snapshot.quarantineJobs ?? []);
     updateLog(alerts.items ?? [], incidents.items ?? []);
   } catch (err) {
     console.error('데이터 로드 실패', err);
+  }
+}
+
+async function loadInitialState() {
+  return loadState();
+}
+
+async function handleDemoStart() {
+  const btn = document.getElementById('btn-demo-start');
+  const originalText = btn?.innerText ?? '데모 시작';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerText = '시작 중...';
+  }
+
+  try {
+    const response = await fetch(`${API_URL}/demo/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    if (response.ok) {
+      showNotification('데모 시작됨');
+      await loadState();
+    } else {
+      const error = await response.json();
+      alert(`데모 시작 실패: ${error.error || '알 수 없는 오류'}`);
+    }
+  } catch (err) {
+    console.error(err);
+    alert('데모 시작 요청 중 네트워크 오류가 발생했습니다.');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerText = originalText;
+    }
+  }
+}
+
+async function handleDemoStop() {
+  const btn = document.getElementById('btn-demo-stop');
+  const originalText = btn?.innerText ?? '데모 중지';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerText = '중지 중...';
+  }
+
+  try {
+    const response = await fetch(`${API_URL}/demo/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    if (response.ok) {
+      showNotification('데모 중지됨');
+      await loadState();
+    } else {
+      const error = await response.json();
+      alert(`데모 중지 실패: ${error.error || '알 수 없는 오류'}`);
+    }
+  } catch (err) {
+    console.error(err);
+    alert('데모 중지 요청 중 네트워크 오류가 발생했습니다.');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerText = originalText;
+    }
   }
 }
 
@@ -46,20 +144,28 @@ async function handleRestore(incidentId) {
   }
 }
 
-document.getElementById('btn-demo-start')?.addEventListener('click', async () => {
-  await fetch(`${API_URL}/demo/start`, { method: 'POST' });
-  showNotification('데모 시작됨');
-});
-
-document.getElementById('btn-demo-stop')?.addEventListener('click', async () => {
-  await fetch(`${API_URL}/demo/stop`, { method: 'POST' });
-  showNotification('데모 중지됨');
-});
+document.getElementById('btn-demo-start')?.addEventListener('click', handleDemoStart);
+document.getElementById('btn-demo-stop')?.addEventListener('click', handleDemoStop);
 
 function updateQuarantineTable(jobs) {
   const list = document.getElementById('quarantine-list');
   document.getElementById('quarantine-count').innerText = jobs.length;
 
+  list.innerHTML = jobs.map(job => `
+    <tr>
+      <td>${job.incidentId.substring(0, 8)}...</td>
+      <td title="${job.rootPath}">${job.rootPath}</td>
+      <td>${job.entryCount}개</td>
+      <td><span class="badge danger">격리(400/500)</span></td>
+      <td><button class="btn-restore" onclick="handleRestore('${job.incidentId}')">복구</button></td>
+    </tr>
+  `).join('');
+}
+
+function updateQuarantineTable_bjh(jobs) {
+  const list = document.getElementById('quarantine-list-bjh');
+  if (!list) return;
+  document.getElementById('quarantine-count-bjh').innerText = jobs.length;
   list.innerHTML = jobs.map(job => `
     <tr>
       <td>${job.incidentId.substring(0, 8)}...</td>
@@ -143,6 +249,15 @@ function updateLog(alerts, incidents = []) {
   container.innerHTML = entries.join('');
 }
 
+function addLogEntry(payload) {
+  const container = document.getElementById('log-container');
+  if (!container) return;
+  const div = document.createElement('div');
+  div.className = `log-entry ${payload.type}`;
+  div.innerHTML = `<strong>[${payload.type}]</strong> ${payload.path} (PID: ${payload.pid})`;
+  container.prepend(div);
+}
+
 function showNotification(msg) {
   const el = document.createElement('div');
   el.className = 'notification';
@@ -156,12 +271,12 @@ async function checkHealth() {
     await fetch(`${API_URL}/health`);
     const dot = document.getElementById('status-dot');
     const text = document.getElementById('server-status-text');
-    if (dot) dot.style.backgroundColor = '#4caf50';
-    if (text) text.innerText = '서버 연결됨';
+    if (dot && !dot.classList.contains('online')) dot.style.backgroundColor = '#4caf50';
+    if (text && text.innerText === '서버 연결 중...') text.innerText = '서버 연결됨';
   } catch {
     const dot = document.getElementById('status-dot');
     const text = document.getElementById('server-status-text');
-    if (dot) dot.style.backgroundColor = '#f44336';
+    if (dot && !dot.classList.contains('offline')) dot.style.backgroundColor = '#f44336';
     if (text) text.innerText = '서버 연결 끊김';
   }
 }
