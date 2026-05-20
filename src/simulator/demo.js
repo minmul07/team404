@@ -1,13 +1,13 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
+import { pathToFileURL } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+export const DEMO_TARGET_DIR = '/tmp/demo-target';
 
-const TARGET_DIR = path.resolve(__dirname, '../../tmp/demo-target');
-const BACKUP_FILE = path.resolve(__dirname, '../../tmp/demo-backup.json');
-const LOG_FILE = path.resolve(__dirname, '../../tmp/demo-log.jsonl');
+const TARGET_DIR = path.resolve(DEMO_TARGET_DIR);
+const BACKUP_FILE = '/tmp/demo-backup.json';
+const LOG_FILE = '/tmp/demo-log.jsonl';
+const DEMO_FILE_COUNT = 15;
 
 // JSON 형식으로 파일에 기록 (다른 팀원 연동용)
 function writeLog(entry) {
@@ -18,7 +18,7 @@ function writeLog(entry) {
     fs.appendFileSync(LOG_FILE, line + '\n');
 }
 
-export async function startAttack(onEvent = null) {
+export async function startAttack(onEvent = null, options = {}) {
     if (!fs.existsSync(TARGET_DIR)) {
         fs.mkdirSync(TARGET_DIR, { recursive: true });
     }
@@ -30,7 +30,13 @@ export async function startAttack(onEvent = null) {
 
     const backup = {};
 
-    for (let i = 1; i <= 15; i++) {
+    for (let i = 1; i <= DEMO_FILE_COUNT; i++) {
+        if (options.signal?.aborted) {
+            fs.writeFileSync(BACKUP_FILE, JSON.stringify(backup, null, 2));
+            writeLog({ event: 'demo_aborted', targetDir: TARGET_DIR });
+            return { status: 'aborted', targetDir: TARGET_DIR };
+        }
+
         const filePath = path.join(TARGET_DIR, `file_${i}.txt`);
         const lockedPath = filePath + '.demo.locked';
 
@@ -65,12 +71,13 @@ export async function startAttack(onEvent = null) {
             });
 
             fs.writeFileSync(BACKUP_FILE, JSON.stringify(backup, null, 2));
-            return;
+            return { status: 'blocked', targetDir: TARGET_DIR };
         }
     }
 
     fs.writeFileSync(BACKUP_FILE, JSON.stringify(backup, null, 2));
-    writeLog({ event: 'demo_completed', totalFiles: 15 });
+    writeLog({ event: 'demo_completed', totalFiles: DEMO_FILE_COUNT });
+    return { status: 'completed', targetDir: TARGET_DIR, totalFiles: DEMO_FILE_COUNT };
 }
 
 export function restoreDemo() {
@@ -113,6 +120,25 @@ export function restoreDemo() {
     writeLog({ event: 'restore_completed', targetDir: TARGET_DIR });
 }
 
+export function resetDemo() {
+    fs.rmSync(TARGET_DIR, { recursive: true, force: true });
+    fs.mkdirSync(TARGET_DIR, { recursive: true });
+
+    for (let i = 1; i <= DEMO_FILE_COUNT; i++) {
+        fs.writeFileSync(path.join(TARGET_DIR, `file_${i}.txt`), `original content ${i}`);
+    }
+
+    if (fs.existsSync(BACKUP_FILE)) fs.unlinkSync(BACKUP_FILE);
+    if (fs.existsSync(LOG_FILE)) fs.unlinkSync(LOG_FILE);
+    writeLog({ event: 'demo_ready', targetDir: TARGET_DIR, totalFiles: DEMO_FILE_COUNT });
+
+    return {
+        status: 'ready',
+        targetDir: TARGET_DIR,
+        totalFiles: DEMO_FILE_COUNT
+    };
+}
+
 if (isDirectCliExecution()) {
     // CLI 실행 진입점
     const action = process.argv[2];
@@ -120,10 +146,13 @@ if (isDirectCliExecution()) {
         startAttack();
     } else if (action === 'restore') {
         restoreDemo();
+    } else if (action === 'reset') {
+        resetDemo();
     } else {
         console.log('Usage:');
         console.log('  node src/simulator/demo.js run      # Start attack simulation');
         console.log('  node src/simulator/demo.js restore  # Restore all files');
+        console.log('  node src/simulator/demo.js reset    # Reset demo files');
     }
 }
 

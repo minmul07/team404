@@ -50,5 +50,6 @@ export const API_ROUTES = Object.freeze({
   QUARANTINE_JOBS: '/api/quarantine-jobs',
   DEMO_START: '/api/demo/start',
   DEMO_STOP: '/api/demo/stop',
+  DEMO_RESET: '/api/demo/reset',
   WATCH_TARGET: '/api/watch/target'
 });

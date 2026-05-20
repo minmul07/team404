@@ -33,8 +33,8 @@
                 </div>
                 <button id="btn-watch-toggle" class="btn-watch-toggle" type="button">감시 시작</button>
                 <div class="controls">
-                    <button id="btn-demo-start" class="btn-primary">데모 시작</button>
-                    <button id="btn-demo-stop" class="btn-secondary">데모 중지</button>
+                    <button id="btn-demo-action" class="btn-primary" type="button">데모 시작</button>
+                    <button id="btn-demo-reset" class="btn-secondary" type="button">데모 초기화</button>
                 </div>
             </div>
         </header>
@@ -52,6 +52,21 @@
                 <div class="card stat-card">
                     <h2>감시 디렉터리</h2>
                     <p id="target-path">-</p>
+                    <fieldset class="watch-mode-group" aria-label="감시 디렉터리 모드">
+                        <label class="radio-option">
+                            <input type="radio" name="watch-mode" value="normal" checked>
+                            <span>일반 감시</span>
+                        </label>
+                        <label class="radio-option">
+                            <input type="radio" name="watch-mode" value="demo">
+                            <span>데모 폴더 감시</span>
+                        </label>
+                    </fieldset>
+                    <div class="watch-path-row">
+                        <input id="watch-target-input" type="text" spellcheck="false" placeholder="/path/to/watch">
+                        <button id="btn-watch-target-apply" class="btn-secondary" type="button">적용</button>
+                    </div>
+                    <p id="watch-target-error" class="field-error" hidden></p>
                 </div>
             </section>
 

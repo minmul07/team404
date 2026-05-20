@@ -1,15 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 
 import { API_ROUTES, EVENT_NAMES } from '../src/shared/contracts/event-names.js';
 import { createApiServer, handleApiRequest } from '../src/server/create-api-server.js';
 
-const DEMO_TARGET_ROOT = path.resolve(process.cwd(), 'tmp/demo-target');
+const DEMO_TARGET_ROOT = '/tmp/demo-target';
 
-test('handleApiRequest enables demo mode through POST /api/demo/start', async () => {
+test('handleApiRequest starts demo through POST /api/demo/start', async () => {
   const runtime = createRuntimeDouble();
   const response = createResponseDouble();
 
@@ -23,7 +25,7 @@ test('handleApiRequest enables demo mode through POST /api/demo/start', async ()
     response
   });
 
-  assert.equal(runtime.enableDemoModeCalls, 1);
+  assert.equal(runtime.startDemoCalls, 1);
   assert.equal(response.statusCode, 200);
   assert.equal(response.payload.activeMode, 'demo');
   assert.equal(response.payload.activeTarget.rootPath, DEMO_TARGET_ROOT);
@@ -47,7 +49,7 @@ test('handleApiRequest reports runtime health through GET /api/health', async ()
   assert.equal(response.payload.status, 'running');
 });
 
-test('handleApiRequest disables demo mode through POST /api/demo/stop', async () => {
+test('handleApiRequest stops demo through POST /api/demo/stop', async () => {
   const runtime = createRuntimeDouble();
   const response = createResponseDouble();
 
@@ -61,31 +63,35 @@ test('handleApiRequest disables demo mode through POST /api/demo/stop', async ()
     response
   });
 
-  assert.equal(runtime.disableDemoModeCalls, 1);
+  assert.equal(runtime.stopDemoCalls, 1);
   assert.equal(response.statusCode, 200);
-  assert.equal(response.payload.activeMode, 'config');
-  assert.equal(response.payload.activeTarget.rootPath, '/tmp/configured-watch');
+  assert.equal(response.payload.demo.status, 'aborted');
 });
 
 test('handleApiRequest switches watch target through POST /api/watch/target', async () => {
   const runtime = createRuntimeDouble();
   const response = createResponseDouble();
+  const targetPath = await fs.mkdtemp(path.join(os.tmpdir(), 'team404-api-target-'));
 
-  await handleApiRequest({
-    runtime,
-    request: createJsonRequest({
-      method: 'POST',
-      url: API_ROUTES.WATCH_TARGET,
-      body: { targetPath: './tmp/api-target' }
-    }),
-    response
-  });
+  try {
+    await handleApiRequest({
+      runtime,
+      request: createJsonRequest({
+        method: 'POST',
+        url: API_ROUTES.WATCH_TARGET,
+        body: { targetPath }
+      }),
+      response
+    });
 
-  assert.equal(runtime.setTargetPathCalls.length, 1);
-  assert.equal(runtime.setTargetPathCalls[0], './tmp/api-target');
-  assert.equal(response.statusCode, 200);
-  assert.equal(response.payload.activeMode, 'target');
-  assert.ok(response.payload.activeTarget.rootPath.endsWith('/tmp/api-target'));
+    assert.equal(runtime.setTargetPathCalls.length, 1);
+    assert.equal(runtime.setTargetPathCalls[0], targetPath);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.activeMode, 'target');
+    assert.equal(response.payload.activeTarget.rootPath, `/resolved/${targetPath}`);
+  } finally {
+    await fs.rm(targetPath, { recursive: true, force: true });
+  }
 });
 
 test('handleApiRequest rejects POST /api/watch/target without a targetPath', async () => {
@@ -173,6 +179,9 @@ function createRuntimeDouble() {
     eventBus: new EventEmitter(),
     enableDemoModeCalls: 0,
     disableDemoModeCalls: 0,
+    startDemoCalls: 0,
+    stopDemoCalls: 0,
+    resetDemoCalls: 0,
     setTargetPathCalls: [],
     incidentStore: {
       getIncidents() {
@@ -213,6 +222,34 @@ function createRuntimeDouble() {
         activeMode: 'config',
         activeTarget: {
           rootPath: '/tmp/configured-watch'
+        }
+      };
+    },
+    async startDemo() {
+      this.startDemoCalls += 1;
+      return {
+        activeMode: 'demo',
+        activeTarget: {
+          rootPath: DEMO_TARGET_ROOT
+        },
+        demo: {
+          status: 'running'
+        }
+      };
+    },
+    async stopDemo() {
+      this.stopDemoCalls += 1;
+      return {
+        demo: {
+          status: 'aborted'
+        }
+      };
+    },
+    async resetDemo() {
+      this.resetDemoCalls += 1;
+      return {
+        demo: {
+          status: 'ready'
         }
       };
     },

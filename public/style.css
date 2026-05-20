@@ -300,6 +300,68 @@ button:disabled {
     color: var(--text-soft);
 }
 
+.watch-mode-group {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin: 1rem 0 0;
+    padding: 0;
+    border: 0;
+}
+
+.radio-option {
+    min-height: 34px;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.35rem 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.65);
+    color: var(--text-soft);
+    font-size: 0.86rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.radio-option input {
+    accent-color: var(--primary);
+}
+
+.watch-path-row {
+    display: flex;
+    gap: 0.55rem;
+    margin-top: 0.75rem;
+}
+
+.watch-path-row input {
+    min-width: 0;
+    flex: 1;
+    min-height: 36px;
+    padding: 0.45rem 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #020617;
+    color: var(--text-main);
+}
+
+.watch-path-row input:disabled {
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+.watch-path-row input.invalid {
+    border-color: var(--danger);
+    color: #fecaca;
+}
+
+.field-error {
+    margin: 0.5rem 0 0;
+    color: #fca5a5;
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
 .section-header {
     display: flex;
     align-items: center;

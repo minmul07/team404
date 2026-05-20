@@ -38,6 +38,9 @@ socket.onmessage = (event) => {
     case 'QUARANTINE_COMPLETED':
     case 'QUARANTINE_FAILED':
     case 'RESTORE_COMPLETED':
+    case 'DEMO_STARTED':
+    case 'DEMO_ABORTED':
+    case 'DEMO_COMPLETED':
       appendIncidentEntry(normalizeIncidentEvent(msg));
       loadState(); // refresh stats + quarantine table
       break;
@@ -72,9 +75,11 @@ async function loadState() {
     if (qCount) qCount.innerText = snapshot.quarantineJobs?.length ?? 0;
 
     const wCount = document.getElementById('watching-count');
-    if (wCount) wCount.innerText = snapshot.watchEnabled ? '1' : '0';
+    if (wCount) wCount.innerText = String(snapshot.watchedFileCount ?? 0);
 
     updateWatchButtonLabel(snapshot.watchEnabled);
+    updateWatchTargetControls(snapshot);
+    updateDemoControls(snapshot);
 
     updateQuarantineTable(snapshot.quarantineJobs ?? []);
 
@@ -94,6 +99,67 @@ function updateWatchButtonLabel(enabled) {
   if (btn) {
     btn.innerText = enabled ? '감시 중지' : '감시 시작';
     btn.dataset.enabled = String(enabled);
+    btn.classList.toggle('active', enabled);
+  }
+}
+
+function updateWatchTargetControls(snapshot) {
+  const mode = snapshot.activeMode === 'demo' ? 'demo' : 'normal';
+  const targetPath = (snapshot.activeTarget?.rootPath ?? snapshot.activeTarget) || '';
+  const input = document.getElementById('watch-target-input');
+  const applyBtn = document.getElementById('btn-watch-target-apply');
+  const error = document.getElementById('watch-target-error');
+
+  document.querySelectorAll('input[name="watch-mode"]').forEach((radio) => {
+    radio.checked = radio.value === mode;
+  });
+
+  if (input && document.activeElement !== input) {
+    input.value = targetPath;
+  }
+
+  if (input) {
+    input.disabled = mode === 'demo';
+    input.classList.remove('invalid');
+  }
+
+  if (applyBtn) {
+    applyBtn.disabled = mode === 'demo';
+  }
+
+  if (error) {
+    error.hidden = true;
+    error.innerText = '';
+  }
+}
+
+function updateDemoControls(snapshot) {
+  const actionBtn = document.getElementById('btn-demo-action');
+  const resetBtn = document.getElementById('btn-demo-reset');
+  const demoStatus = snapshot.demo?.status ?? 'ready';
+  const isDemoWatch = snapshot.activeMode === 'demo';
+  const isRunning = demoStatus === 'running';
+  const isBusy = demoStatus === 'stopping';
+
+  if (actionBtn) {
+    if (isRunning) {
+      actionBtn.innerText = '데모 중지';
+      actionBtn.dataset.action = 'stop';
+      actionBtn.disabled = false;
+    } else if (isBusy) {
+      actionBtn.innerText = '데모 실행 중';
+      actionBtn.dataset.action = '';
+      actionBtn.disabled = true;
+    } else {
+      actionBtn.innerText = '데모 시작';
+      actionBtn.dataset.action = 'start';
+      actionBtn.disabled = !isDemoWatch;
+    }
+  }
+
+  if (resetBtn) {
+    resetBtn.innerText = '데모 초기화';
+    resetBtn.disabled = !isDemoWatch || isRunning || isBusy;
   }
 }
 
@@ -114,7 +180,7 @@ async function handleWatchToggle() {
       const data = await response.json();
       updateWatchButtonLabel(data.watchEnabled);
       const wCount = document.getElementById('watching-count');
-      if (wCount) wCount.innerText = data.watchEnabled ? '1' : '0';
+      if (wCount) wCount.innerText = String(data.watchedFileCount ?? 0);
       showNotification(data.watchEnabled ? '감시가 시작되었습니다.' : '감시가 중지되었습니다.');
     } else {
       const error = await response.json();
@@ -128,68 +194,156 @@ async function handleWatchToggle() {
   }
 }
 
+async function handleWatchModeChange(event) {
+  const mode = event.target?.value;
+  clearWatchTargetError();
 
-async function handleDemoStart() {
-  const btn = document.getElementById('btn-demo-start');
-  const originalText = btn?.innerText ?? '데모 시작';
-  if (btn) {
-    btn.disabled = true;
-    btn.innerText = '시작 중...';
+  if (mode === 'demo') {
+    await updateWatchTarget({ mode: 'demo' });
+    return;
   }
 
-  try {
-    const response = await fetch(`${API_URL}/demo/start`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-    if (response.ok) {
-      showNotification('데모 시작됨');
-      await loadState();
-    } else {
-      const error = await response.json();
-      alert(`데모 시작 실패: ${error.error || '알 수 없는 오류'}`);
-    }
-  } catch (err) {
-    console.error(err);
-    alert('데모 시작 요청 중 네트워크 오류가 발생했습니다.');
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.innerText = originalText;
-    }
+  if (mode === 'normal') {
+    await handleWatchTargetApply();
   }
 }
 
-async function handleDemoStop() {
-  const btn = document.getElementById('btn-demo-stop');
-  const originalText = btn?.innerText ?? '데모 중지';
+async function handleWatchTargetApply() {
+  const selectedMode = document.querySelector('input[name="watch-mode"]:checked')?.value ?? 'normal';
+  const input = document.getElementById('watch-target-input');
+  const targetPath = input?.value?.trim();
+
+  if (selectedMode !== 'normal') {
+    return;
+  }
+
+  if (!targetPath) {
+    showWatchTargetError('감시할 디렉터리 경로를 입력하세요.');
+    return;
+  }
+
+  await updateWatchTarget({ mode: 'normal', targetPath });
+}
+
+async function updateWatchTarget(payload) {
+  const applyBtn = document.getElementById('btn-watch-target-apply');
+  if (applyBtn) applyBtn.disabled = true;
+
+  try {
+    const response = await fetch(`${API_URL}/watch/target`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (response.ok) {
+      clearWatchTargetError();
+      showNotification(payload.mode === 'demo' ? '데모 폴더 감시로 변경되었습니다.' : '감시 디렉터리가 변경되었습니다.');
+      await loadState();
+      return;
+    }
+
+    const error = await response.json();
+    const message = error.message === 'targetPath must be an existing directory'
+      ? '존재하지 않는 디렉터리입니다.'
+      : (error.message || error.error || '감시 디렉터리 변경 실패');
+    showWatchTargetError(message);
+  } catch (err) {
+    console.error(err);
+    showWatchTargetError('감시 디렉터리 변경 중 네트워크 오류가 발생했습니다.');
+  } finally {
+    if (applyBtn) applyBtn.disabled = false;
+  }
+}
+
+function showWatchTargetError(message) {
+  const error = document.getElementById('watch-target-error');
+  const input = document.getElementById('watch-target-input');
+
+  if (error) {
+    error.hidden = false;
+    error.innerText = message;
+  }
+
+  if (input) {
+    input.classList.add('invalid');
+  }
+}
+
+function clearWatchTargetError() {
+  const error = document.getElementById('watch-target-error');
+  const input = document.getElementById('watch-target-input');
+
+  if (error) {
+    error.hidden = true;
+    error.innerText = '';
+  }
+
+  if (input) {
+    input.classList.remove('invalid');
+  }
+}
+
+
+async function handleDemoAction() {
+  const btn = document.getElementById('btn-demo-action');
+  const action = btn?.dataset.action;
+  if (!btn || !action) return;
+
   if (btn) {
     btn.disabled = true;
-    btn.innerText = '중지 중...';
+    btn.innerText = '데모 실행 중';
   }
 
   try {
-    const response = await fetch(`${API_URL}/demo/stop`, {
+    const response = await fetch(`${API_URL}/demo/${action === 'stop' ? 'stop' : 'start'}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
 
     if (response.ok) {
-      showNotification('데모 중지됨');
+      showNotification(action === 'stop' ? '데모 중지 요청됨' : '데모 시작됨');
       await loadState();
     } else {
       const error = await response.json();
-      alert(`데모 중지 실패: ${error.error || '알 수 없는 오류'}`);
+      alert(`데모 요청 실패: ${error.message || error.error || '알 수 없는 오류'}`);
     }
   } catch (err) {
     console.error(err);
-    alert('데모 중지 요청 중 네트워크 오류가 발생했습니다.');
+    alert('데모 요청 중 네트워크 오류가 발생했습니다.');
+  } finally {
+    await loadState();
+  }
+}
+
+async function handleDemoReset() {
+  const btn = document.getElementById('btn-demo-reset');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerText = '초기화 중...';
+  }
+
+  try {
+    const response = await fetch(`${API_URL}/demo/reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    if (response.ok) {
+      showNotification('데모 폴더가 초기화되었습니다.');
+      await loadState();
+    } else {
+      const error = await response.json();
+      alert(`데모 초기화 실패: ${error.message || error.error || '알 수 없는 오류'}`);
+    }
+  } catch (err) {
+    console.error(err);
+    alert('데모 초기화 요청 중 네트워크 오류가 발생했습니다.');
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.innerText = originalText;
     }
+    await loadState();
   }
 }
 
@@ -356,6 +510,9 @@ function appendIncidentEntry(entry) {
     case 'restore':
       html = renderRestoreEntry(entry);
       break;
+    case 'demo':
+      html = renderDemoEntry(entry);
+      break;
     default:
       html = renderAlertEntry(entry);
   }
@@ -422,6 +579,15 @@ function normalizeIncidentEvent(msg) {
         rootPath: payload.rootPath,
         observedAt: payload.observedAt ?? new Date().toISOString()
       };
+    case 'DEMO_STARTED':
+    case 'DEMO_ABORTED':
+    case 'DEMO_COMPLETED':
+      return {
+        _type: 'demo',
+        status: payload.status ?? msg.type.replace('DEMO_', '').toLowerCase(),
+        reason: payload.lastError,
+        observedAt: payload.completedAt ?? payload.startedAt ?? new Date().toISOString()
+      };
     default:
       return { _type: 'alert', ...payload, observedAt: payload.observedAt ?? new Date().toISOString() };
   }
@@ -438,6 +604,23 @@ function renderRestoreEntry(entry) {
         <span class="log-type">권한 복원 완료</span>
       </div>
       <div class="log-reason">ID: ${escapeHtml(entry.incidentId ?? '-')}</div>
+    </div>
+  `;
+}
+
+function renderDemoEntry(entry) {
+  const time = formatTime(entry.observedAt);
+  const status = String(entry.status ?? 'event').toUpperCase();
+  const severityClass = entry.status === 'completed' ? 'success' : entry.status === 'failed' ? 'danger' : 'low';
+
+  return `
+    <div class="log-entry alert-demo">
+      <div class="log-meta">
+        <span class="log-time">${time}</span>
+        <span class="severity ${severityClass}">DEMO</span>
+        <span class="log-type">${escapeHtml(status)}</span>
+      </div>
+      ${entry.reason ? `<div class="log-reason">${escapeHtml(entry.reason)}</div>` : ''}
     </div>
   `;
 }
@@ -569,9 +752,13 @@ function escapeHtml(value) {
 }
 
 
-document.getElementById('btn-demo-start')?.addEventListener('click', handleDemoStart);
-document.getElementById('btn-demo-stop')?.addEventListener('click', handleDemoStop);
+document.getElementById('btn-demo-action')?.addEventListener('click', handleDemoAction);
+document.getElementById('btn-demo-reset')?.addEventListener('click', handleDemoReset);
 document.getElementById('btn-watch-toggle')?.addEventListener('click', handleWatchToggle);
+document.getElementById('btn-watch-target-apply')?.addEventListener('click', handleWatchTargetApply);
+document.querySelectorAll('input[name="watch-mode"]').forEach((radio) => {
+  radio.addEventListener('change', handleWatchModeChange);
+});
 
 document.querySelector('.menu')?.addEventListener('click', (event) => {
   const item = event.target.closest('[data-view]');

@@ -1,12 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import path from 'node:path';
 
 import { MonitorService } from '../src/collector/monitor-service.js';
 import { createEventBus } from '../src/shared/utils/create-event-bus.js';
 
 const PROJECT_ROOT = process.cwd();
-const DEMO_TARGET_ROOT = path.resolve(PROJECT_ROOT, 'tmp/demo-target');
+const DEMO_TARGET_ROOT = '/tmp/demo-target';
 
 function createConfig() {
   return {

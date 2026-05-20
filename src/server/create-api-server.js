@@ -72,18 +72,35 @@ export async function handleApiRequest({ runtime, request, response }) {
   }
 
   if (request.method === 'POST' && url.pathname === API_ROUTES.DEMO_START) {
-    return writeJson(response, 200, await runtime.enableDemoMode());
+    return writeJson(response, 200, await runtime.startDemo());
   }
 
   if (request.method === 'POST' && url.pathname === API_ROUTES.DEMO_STOP) {
-    return writeJson(response, 200, await runtime.disableDemoMode());
+    return writeJson(response, 200, await runtime.stopDemo());
+  }
+
+  if (request.method === 'POST' && url.pathname === API_ROUTES.DEMO_RESET) {
+    return writeJson(response, 200, await runtime.resetDemo());
   }
 
   if (request.method === 'POST' && url.pathname === API_ROUTES.WATCH_TARGET) {
     const payload = await readJsonBody(request);
+    const mode = payload?.mode ?? 'normal';
+
+    if (mode === 'demo') {
+      return writeJson(response, 200, await runtime.enableDemoMode());
+    }
+
+    if (mode !== 'normal') {
+      throw createBadRequest('mode must be normal or demo');
+    }
 
     if (!payload?.targetPath || typeof payload.targetPath !== 'string') {
       throw createBadRequest('targetPath is required');
+    }
+
+    if (!await isExistingDirectory(payload.targetPath)) {
+      throw createBadRequest('targetPath must be an existing directory');
     }
 
     return writeJson(response, 200, await runtime.setTargetPath(payload.targetPath));
@@ -146,6 +163,15 @@ function createBadRequest(message) {
   return error;
 }
 
+async function isExistingDirectory(targetPath) {
+  try {
+    const stat = await fs.stat(path.resolve(targetPath));
+    return stat.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 function writeJson(response, statusCode, payload) {
   response.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
   response.end(JSON.stringify(payload, null, 2));
@@ -178,6 +204,9 @@ function attachDashboardWebSocket({ server, runtime }) {
     [EVENT_NAMES.QUARANTINE_FAILED, (payload) => broadcast({ type: 'QUARANTINE_FAILED', payload })],
     [EVENT_NAMES.RESTORE_COMPLETED, (payload) => broadcast({ type: 'RESTORE_COMPLETED', payload })],
     [EVENT_NAMES.RULE_MATCH, (payload) => broadcast({ type: 'RULE_MATCH', payload })],
+    [EVENT_NAMES.DEMO_STARTED, (payload) => broadcast({ type: 'DEMO_STARTED', payload })],
+    [EVENT_NAMES.DEMO_ABORTED, (payload) => broadcast({ type: 'DEMO_ABORTED', payload })],
+    [EVENT_NAMES.DEMO_COMPLETED, (payload) => broadcast({ type: 'DEMO_COMPLETED', payload })],
     [EVENT_NAMES.SYSTEM_HEALTH, (payload) => broadcast({ type: 'SYSTEM_HEALTH', payload })]
   ];
 

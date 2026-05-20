@@ -5,6 +5,7 @@ import readline from 'node:readline';
 
 import { EVENT_NAMES } from '../shared/contracts/event-names.js';
 import { MonitorEventNormalizer, parseMonitorLine } from './monitor-event-parser.js';
+import { DEMO_TARGET_DIR } from '../simulator/demo.js';
 
 export class MonitorService {
   constructor({ config, eventBus, watchOptions = {} }) {
@@ -281,5 +282,5 @@ function createFallbackTarget() {
 }
 
 function resolveDemoTargetPath(projectRoot) {
-  return path.resolve(projectRoot ?? '.', 'tmp/demo-target');
+  return path.resolve(DEMO_TARGET_DIR);
 }
