@@ -9,11 +9,23 @@ import { QuarantineService } from '../isolation/quarantine-service.js';
 import { resetDemo, startAttack } from '../simulator/demo.js';
 import { EVENT_NAMES } from '../shared/contracts/event-names.js';
 
+export const DEFAULT_RESPONSE_POLICY = Object.freeze({
+  lockDirectoryPermissions: true,
+  killSuspectProcesses: false,
+  shutdownSystem: false
+});
+
 export function createRuntime(config, options = {}) {
   const eventBus = createEventBus();
   const incidentStore = new IncidentStore({ eventBus });
   const ruleEngine = new RuleEngine({ eventBus, config });
-  const quarantineService = new QuarantineService({ eventBus });
+  const responsePolicy = normalizeResponsePolicy(
+    options.responsePolicy ?? config.responsePolicy
+  );
+  const quarantineService = new QuarantineService({
+    eventBus,
+    getResponsePolicy: () => ({ ...responsePolicy })
+  });
   const monitorService = new MonitorService({
     config,
     eventBus,
@@ -93,6 +105,16 @@ export function createRuntime(config, options = {}) {
     async setTargetPath(targetPath) {
       await monitorService.setWatchOptions({ targetPath });
       return this.getSnapshot();
+    },
+    getResponsePolicy() {
+      return { ...responsePolicy };
+    },
+    updateResponsePolicy(nextPolicy = {}) {
+      const normalizedPolicy = normalizeResponsePolicy(nextPolicy);
+      responsePolicy.lockDirectoryPermissions = normalizedPolicy.lockDirectoryPermissions;
+      responsePolicy.killSuspectProcesses = normalizedPolicy.killSuspectProcesses;
+      responsePolicy.shutdownSystem = normalizedPolicy.shutdownSystem;
+      return this.getResponsePolicy();
     },
     async startDemo() {
       const monitorHealth = monitorService.getHealth();
@@ -199,6 +221,7 @@ export function createRuntime(config, options = {}) {
         watchEnabled: state.watchEnabled,
         activeMode: monitorHealth.activeMode,
         activeTarget: monitorHealth.activeTarget,
+        responsePolicy: this.getResponsePolicy(),
         demo: toDemoSnapshot(state.demo),
         monitor: monitorHealth,
         rules: ruleEngine.getState(),
@@ -213,6 +236,7 @@ export function createRuntime(config, options = {}) {
         watchEnabled: state.watchEnabled,
         activeMode: monitorHealth.activeMode,
         activeTarget: monitorHealth.activeTarget,
+        responsePolicy: this.getResponsePolicy(),
         demo: toDemoSnapshot(state.demo),
         watchedFileCount,
         incidents: incidentStore.getIncidents(),
@@ -223,6 +247,30 @@ export function createRuntime(config, options = {}) {
     async restoreIncident(incidentId) {
       return quarantineService.restore(incidentId);
     }
+  };
+}
+
+export function normalizeResponsePolicy(policy = {}) {
+  if (policy.shutdownSystem) {
+    return {
+      lockDirectoryPermissions: true,
+      killSuspectProcesses: true,
+      shutdownSystem: true
+    };
+  }
+
+  if (policy.killSuspectProcesses) {
+    return {
+      lockDirectoryPermissions: true,
+      killSuspectProcesses: true,
+      shutdownSystem: false
+    };
+  }
+
+  return {
+    lockDirectoryPermissions: DEFAULT_RESPONSE_POLICY.lockDirectoryPermissions,
+    killSuspectProcesses: DEFAULT_RESPONSE_POLICY.killSuspectProcesses,
+    shutdownSystem: DEFAULT_RESPONSE_POLICY.shutdownSystem
   };
 }
 

@@ -115,6 +115,106 @@ test('handleApiRequest rejects POST /api/watch/target without a targetPath', asy
   assert.equal(response.payload.message, 'targetPath is required');
 });
 
+test('handleApiRequest returns response policy settings', async () => {
+  const runtime = createRuntimeDouble();
+  const response = createResponseDouble();
+
+  await handleApiRequest({
+    runtime,
+    request: {
+      method: 'GET',
+      url: API_ROUTES.RESPONSE_POLICY,
+      headers: { host: 'localhost' }
+    },
+    response
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.payload, {
+    lockDirectoryPermissions: true,
+    killSuspectProcesses: false,
+    shutdownSystem: false
+  });
+});
+
+test('handleApiRequest updates response policy settings', async () => {
+  const runtime = createRuntimeDouble();
+  const response = createResponseDouble();
+
+  await handleApiRequest({
+    runtime,
+    request: createJsonRequest({
+      method: 'PUT',
+      url: API_ROUTES.RESPONSE_POLICY,
+      body: {
+        lockDirectoryPermissions: true,
+        killSuspectProcesses: true,
+        shutdownSystem: false
+      }
+    }),
+    response
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(runtime.updateResponsePolicyCalls.length, 1);
+  assert.deepEqual(response.payload, {
+    lockDirectoryPermissions: true,
+    killSuspectProcesses: true,
+    shutdownSystem: false
+  });
+});
+
+test('handleApiRequest normalizes shutdown response policy to cumulative stages', async () => {
+  const runtime = createRuntimeDouble();
+  const response = createResponseDouble();
+
+  await handleApiRequest({
+    runtime,
+    request: createJsonRequest({
+      method: 'PUT',
+      url: API_ROUTES.RESPONSE_POLICY,
+      body: {
+        lockDirectoryPermissions: false,
+        killSuspectProcesses: false,
+        shutdownSystem: true
+      }
+    }),
+    response
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.payload, {
+    lockDirectoryPermissions: true,
+    killSuspectProcesses: true,
+    shutdownSystem: true
+  });
+});
+
+test('handleApiRequest rejects invalid response policy settings', async () => {
+  const runtime = createRuntimeDouble();
+  const response = createResponseDouble();
+
+  await handleApiRequest({
+    runtime,
+    request: createJsonRequest({
+      method: 'PUT',
+      url: API_ROUTES.RESPONSE_POLICY,
+      body: {
+        lockDirectoryPermissions: true,
+        killSuspectProcesses: false,
+        shutdownSystem: 'yes'
+      }
+    }),
+    response
+  }).catch((error) => {
+    response.writeHead(error.statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
+    response.end(JSON.stringify({ message: error.message }));
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.payload.message, 'shutdownSystem must be boolean');
+});
+
 test('createApiServer upgrades dashboard WebSocket and broadcasts runtime events', async () => {
   const runtime = createRuntimeDouble();
   const server = createApiServer({ runtime });
@@ -183,6 +283,12 @@ function createRuntimeDouble() {
     stopDemoCalls: 0,
     resetDemoCalls: 0,
     setTargetPathCalls: [],
+    updateResponsePolicyCalls: [],
+    responsePolicy: {
+      lockDirectoryPermissions: true,
+      killSuspectProcesses: false,
+      shutdownSystem: false
+    },
     incidentStore: {
       getIncidents() {
         return [];
@@ -204,8 +310,35 @@ function createRuntimeDouble() {
         activeMode: 'config',
         activeTarget: {
           rootPath: '/tmp/configured-watch'
-        }
+        },
+        responsePolicy: this.getResponsePolicy()
       };
+    },
+    getResponsePolicy() {
+      return { ...this.responsePolicy };
+    },
+    updateResponsePolicy(policy) {
+      this.updateResponsePolicyCalls.push(policy);
+      if (policy.shutdownSystem) {
+        this.responsePolicy = {
+          lockDirectoryPermissions: true,
+          killSuspectProcesses: true,
+          shutdownSystem: true
+        };
+      } else if (policy.killSuspectProcesses) {
+        this.responsePolicy = {
+          lockDirectoryPermissions: true,
+          killSuspectProcesses: true,
+          shutdownSystem: false
+        };
+      } else {
+        this.responsePolicy = {
+          lockDirectoryPermissions: true,
+          killSuspectProcesses: false,
+          shutdownSystem: false
+        };
+      }
+      return this.getResponsePolicy();
     },
     async enableDemoMode() {
       this.enableDemoModeCalls += 1;

@@ -11,7 +11,7 @@ const VIEW_COPY = {
   },
   settings: {
     title: '설정',
-    subtitle: '운영 설정 화면이 연결되기 전까지 비어있는 상태로 유지됩니다.'
+    subtitle: '탐지 후 자동 대응 단계를 설정합니다.'
   }
 };
 
@@ -80,6 +80,7 @@ async function loadState() {
     updateWatchButtonLabel(snapshot.watchEnabled);
     updateWatchTargetControls(snapshot);
     updateDemoControls(snapshot);
+    updateResponsePolicyControls(snapshot.responsePolicy);
 
     updateQuarantineTable(snapshot.quarantineJobs ?? []);
 
@@ -161,6 +162,67 @@ function updateDemoControls(snapshot) {
     resetBtn.innerText = '데모 초기화';
     resetBtn.disabled = !isDemoWatch || isRunning || isBusy;
   }
+}
+
+function updateResponsePolicyControls(policy = {}) {
+  const lockInput = document.getElementById('policy-lock-permissions');
+  const killInput = document.getElementById('policy-kill-processes');
+  const shutdownInput = document.getElementById('policy-shutdown-system');
+  const status = document.getElementById('response-policy-status');
+  const error = document.getElementById('response-policy-error');
+
+  const selectedLevel = getPolicyLevelFromPolicy(policy);
+  const activeElement = document.activeElement;
+  if (lockInput && killInput && shutdownInput && ![lockInput, killInput, shutdownInput].includes(activeElement)) {
+    lockInput.checked = selectedLevel === 'lock';
+    killInput.checked = selectedLevel === 'kill';
+    shutdownInput.checked = selectedLevel === 'shutdown';
+  }
+
+  if (status) {
+    status.innerText = renderPolicyStatus(policy);
+  }
+  if (error) {
+    error.hidden = true;
+    error.innerText = '';
+  }
+}
+
+function renderPolicyStatus(policy = {}) {
+  const level = getPolicyLevelFromPolicy(policy);
+  if (level === 'shutdown') return '활성화: 3단계';
+  if (level === 'kill') return '활성화: 2단계';
+  return '활성화: 1단계';
+}
+
+function getPolicyLevelFromPolicy(policy = {}) {
+  if (policy.shutdownSystem) return 'shutdown';
+  if (policy.killSuspectProcesses) return 'kill';
+  return 'lock';
+}
+
+function getPolicyFromSelectedLevel(level) {
+  if (level === 'shutdown') {
+    return {
+      lockDirectoryPermissions: true,
+      killSuspectProcesses: true,
+      shutdownSystem: true
+    };
+  }
+
+  if (level === 'kill') {
+    return {
+      lockDirectoryPermissions: true,
+      killSuspectProcesses: true,
+      shutdownSystem: false
+    };
+  }
+
+  return {
+    lockDirectoryPermissions: true,
+    killSuspectProcesses: false,
+    shutdownSystem: false
+  };
 }
 
 async function handleWatchToggle() {
@@ -345,6 +407,60 @@ async function handleDemoReset() {
     }
     await loadState();
   }
+}
+
+async function handleResponsePolicySave(event) {
+  event.preventDefault();
+
+  const saveBtn = document.getElementById('btn-response-policy-save');
+  const selectedLevel = document.querySelector('input[name="responsePolicyLevel"]:checked')?.value ?? 'lock';
+  const payload = getPolicyFromSelectedLevel(selectedLevel);
+
+  if (payload.shutdownSystem && !confirm('OS 강제 종료 단계가 활성화됩니다. 격리 VM 또는 실습 환경에서만 사용하세요.')) {
+    return;
+  }
+
+  if (payload.killSuspectProcesses && !confirm('의심 프로세스 종료 단계가 활성화됩니다. 감시 디렉토리를 점유 중인 프로세스만 대상으로 합니다.')) {
+    return;
+  }
+
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.innerText = '저장 중';
+  }
+
+  try {
+    const response = await fetch(`${API_URL}/settings/response-policy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      showResponsePolicyError(error.message || error.error || '대응 정책 저장 실패');
+      return;
+    }
+
+    const policy = await response.json();
+    updateResponsePolicyControls(policy);
+    showNotification('대응 정책이 저장되었습니다.');
+  } catch (err) {
+    console.error(err);
+    showResponsePolicyError('대응 정책 저장 중 네트워크 오류가 발생했습니다.');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerText = '저장';
+    }
+  }
+}
+
+function showResponsePolicyError(message) {
+  const error = document.getElementById('response-policy-error');
+  if (!error) return;
+  error.hidden = false;
+  error.innerText = message;
 }
 
 
@@ -756,6 +872,7 @@ document.getElementById('btn-demo-action')?.addEventListener('click', handleDemo
 document.getElementById('btn-demo-reset')?.addEventListener('click', handleDemoReset);
 document.getElementById('btn-watch-toggle')?.addEventListener('click', handleWatchToggle);
 document.getElementById('btn-watch-target-apply')?.addEventListener('click', handleWatchTargetApply);
+document.getElementById('response-policy-form')?.addEventListener('submit', handleResponsePolicySave);
 document.querySelectorAll('input[name="watch-mode"]').forEach((radio) => {
   radio.addEventListener('change', handleWatchModeChange);
 });

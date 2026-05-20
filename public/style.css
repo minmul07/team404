@@ -693,6 +693,72 @@ button:disabled {
     background: rgba(15, 23, 42, 0.55);
 }
 
+.settings-card {
+    max-width: 920px;
+}
+
+.response-policy-form {
+    display: grid;
+    gap: 0.85rem;
+}
+
+.policy-option {
+    display: grid;
+    grid-template-columns: 22px 1fr;
+    gap: 0.75rem;
+    align-items: flex-start;
+    min-height: 78px;
+    padding: 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.62);
+    cursor: pointer;
+}
+
+.policy-option.warning {
+    border-color: rgba(245, 158, 11, 0.4);
+}
+
+.policy-option.danger {
+    border-color: rgba(239, 68, 68, 0.45);
+}
+
+.policy-option input {
+    width: 18px;
+    height: 18px;
+    margin: 0.15rem 0 0;
+    accent-color: var(--primary);
+}
+
+.policy-copy {
+    display: grid;
+    gap: 0.25rem;
+}
+
+.policy-copy strong {
+    color: var(--text-main);
+    font-size: 0.98rem;
+}
+
+.policy-copy span {
+    color: var(--text-muted);
+    font-size: 0.88rem;
+}
+
+.settings-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-top: 0.25rem;
+}
+
+.settings-status {
+    color: var(--text-muted);
+    font-size: 0.86rem;
+    font-weight: 700;
+}
+
 .notification {
     position: fixed;
     right: 1.25rem;
@@ -861,5 +927,15 @@ button:disabled {
         padding: 0.5rem 0.85rem;
         width: 100%;
         text-align: center;
+    }
+
+    .policy-option {
+        grid-template-columns: 20px 1fr;
+        min-height: auto;
+    }
+
+    .settings-actions .btn-primary {
+        width: 100%;
+        min-height: 44px;
     }
 }

@@ -122,16 +122,40 @@
         </section>
 
         <section class="view-panel" data-view-panel="settings" hidden>
-            <div class="card placeholder-card">
-                <span class="placeholder-label">Empty</span>
-                <h2>설정</h2>
-                <p>환경 설정 화면은 준비 중입니다.</p>
-                <div class="placeholder-grid" aria-hidden="true">
-                    <span></span>
-                    <span></span>
-                    <span></span>
+            <section class="card settings-card">
+                <div class="section-header">
+                    <h2>격리 대응 단계</h2>
+                    <span class="section-kicker">Policy</span>
                 </div>
-            </div>
+                <form id="response-policy-form" class="response-policy-form">
+                    <label class="policy-option">
+                        <input id="policy-lock-permissions" type="radio" name="responsePolicyLevel" value="lock">
+                        <span class="policy-copy">
+                            <strong>1단계: 감시 디렉토리 권한 잠금</strong>
+                            <span>감시 대상 파일과 폴더 권한을 잠가 추가 변경을 차단합니다.</span>
+                        </span>
+                    </label>
+                    <label class="policy-option warning">
+                        <input id="policy-kill-processes" type="radio" name="responsePolicyLevel" value="kill">
+                        <span class="policy-copy">
+                            <strong>2단계: 의심 프로세스 강제 종료</strong>
+                            <span>1단계의 권한 잠금과 더불어 감시 디렉토리 내부 파일을 실제로 점유 중인 PID를 찾아 종료 시도합니다.</span>
+                        </span>
+                    </label>
+                    <label class="policy-option danger">
+                        <input id="policy-shutdown-system" type="radio" name="responsePolicyLevel" value="shutdown">
+                        <span class="policy-copy">
+                            <strong>3단계: 즉시 시스템 강제 종료</strong>
+                            <span>최후의 수단입니다. 가장 강력한 대응 수단이나, 예기지 못한 종료로 다른 프로세스에서의 손상이 발생할 수 있습니다.</span>
+                        </span>
+                    </label>
+                    <p id="response-policy-error" class="field-error" hidden></p>
+                    <div class="settings-actions">
+                        <button id="btn-response-policy-save" class="btn-primary" type="submit">저장</button>
+                        <span id="response-policy-status" class="settings-status">현재 정책을 불러오는 중</span>
+                    </div>
+                </form>
+            </section>
         </section>
     </main>
     <script src="app.js"></script>

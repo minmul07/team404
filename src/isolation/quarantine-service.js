@@ -25,8 +25,13 @@ const SAFE_KILL_PATH_SEGMENT = 'demo-target';
  * - 상태 흐름: DETECTED → QUARANTINING → QUARANTINED → RESTORED / FAILED
  */
 export class QuarantineService {
-  constructor({ eventBus }) {
+  constructor({ eventBus, getResponsePolicy }) {
     this.eventBus = eventBus;
+    this.getResponsePolicy = getResponsePolicy ?? (() => ({
+      lockDirectoryPermissions: true,
+      killSuspectProcesses: false,
+      shutdownSystem: false
+    }));
 
     // incidentId -> { rootPath, entries: [{ filePath, originalMode }] }
     this.quarantineRecords = new Map();
@@ -77,7 +82,10 @@ export class QuarantineService {
     });
 
     try {
-      const entries = await collectPermissions(incident.monitorRootPath);
+      const responsePolicy = this.getResponsePolicy();
+      const entries = responsePolicy.lockDirectoryPermissions
+        ? await collectPermissions(incident.monitorRootPath)
+        : [];
 
       // 원래 권한 저장
       this.quarantineRecords.set(incident.id, {
@@ -86,8 +94,8 @@ export class QuarantineService {
       });
 
       // 해당 경로를 점유 중인 프로세스 종료 (demo-target 범위만)
-      const killedPids = await killProcessesSafe(incident.monitorRootPath);
-      if (killedPids.length > 0) {
+      if (responsePolicy.killSuspectProcesses) {
+        const killedPids = await killProcessesSafe(incident.monitorRootPath);
         await appendLog({
           eventType: 'quarantine_progress',
           incidentId: incident.id,
@@ -98,14 +106,28 @@ export class QuarantineService {
       }
 
       // quarantine.sh 호출 – per-file progress stdout 파싱
-      const progressItems = await lockPermissions(incident.monitorRootPath);
-      for (const item of progressItems) {
+      if (responsePolicy.lockDirectoryPermissions) {
+        const progressItems = await lockPermissions(incident.monitorRootPath);
+        for (const item of progressItems) {
+          await appendLog({
+            eventType: 'quarantine_progress',
+            incidentId: incident.id,
+            rootPath: incident.monitorRootPath,
+            filePath: item.filePath,
+            result: item.result
+          });
+        }
+      }
+
+      if (responsePolicy.shutdownSystem) {
+        const shutdownResult = await requestSystemShutdown();
         await appendLog({
           eventType: 'quarantine_progress',
           incidentId: incident.id,
           rootPath: incident.monitorRootPath,
-          filePath: item.filePath,
-          result: item.result
+          detail: 'system_shutdown',
+          result: shutdownResult.status,
+          reason: shutdownResult.reason
         });
       }
 
@@ -435,6 +457,35 @@ async function collectPids(rootPath) {
 
   // 마운트 단위 PID 조회는 같은 파일시스템의 프로세스를 넓게 반환할 수 있어 사용하지 않는다.
   return [];
+}
+
+async function requestSystemShutdown() {
+  if (process.env.TEAM404_ALLOW_SYSTEM_SHUTDOWN !== '1') {
+    return {
+      status: 'skipped',
+      reason: 'TEAM404_ALLOW_SYSTEM_SHUTDOWN is not enabled'
+    };
+  }
+
+  const commands = [
+    'systemctl poweroff --force --force',
+    'poweroff -f'
+  ];
+
+  const failures = [];
+  for (const command of commands) {
+    try {
+      await execAsync(command);
+      return { status: 'requested', command };
+    } catch (error) {
+      failures.push(`${command}: ${error.message}`);
+    }
+  }
+
+  return {
+    status: 'failed',
+    reason: failures.join(' | ')
+  };
 }
 
 function isSafeKillRoot(rootPath) {

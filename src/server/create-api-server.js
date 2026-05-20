@@ -71,6 +71,16 @@ export async function handleApiRequest({ runtime, request, response }) {
     return writeJson(response, 200, normalizeSnapshot(runtime.getSnapshot()));
   }
 
+  if (request.method === 'GET' && url.pathname === API_ROUTES.RESPONSE_POLICY) {
+    return writeJson(response, 200, normalizeResponsePolicy(runtime.getResponsePolicy?.()));
+  }
+
+  if (request.method === 'PUT' && url.pathname === API_ROUTES.RESPONSE_POLICY) {
+    const payload = await readJsonBody(request);
+    validateResponsePolicyPayload(payload);
+    return writeJson(response, 200, normalizeResponsePolicy(runtime.updateResponsePolicy(payload)));
+  }
+
   if (request.method === 'POST' && url.pathname === API_ROUTES.DEMO_START) {
     return writeJson(response, 200, await runtime.startDemo());
   }
@@ -189,10 +199,49 @@ function normalizeSnapshot(snapshot) {
   return {
     ...rest,
     watchEnabled: Boolean(rest.watchEnabled),
+    responsePolicy: normalizeResponsePolicy(rest.responsePolicy),
     quarantineJobs: Array.isArray(rest.quarantineJobs)
       ? rest.quarantineJobs.map((job) => ({ ...job }))
       : []
   };
+}
+
+function normalizeResponsePolicy(policy = {}) {
+  if (policy?.shutdownSystem) {
+    return {
+      lockDirectoryPermissions: true,
+      killSuspectProcesses: true,
+      shutdownSystem: true
+    };
+  }
+
+  if (policy?.killSuspectProcesses) {
+    return {
+      lockDirectoryPermissions: true,
+      killSuspectProcesses: true,
+      shutdownSystem: false
+    };
+  }
+
+  return {
+    lockDirectoryPermissions: true,
+    killSuspectProcesses: false,
+    shutdownSystem: false
+  };
+}
+
+function validateResponsePolicyPayload(payload) {
+  const fields = [
+    'lockDirectoryPermissions',
+    'killSuspectProcesses',
+    'shutdownSystem'
+  ];
+
+  for (const field of fields) {
+    if (typeof payload?.[field] !== 'boolean') {
+      throw createBadRequest(`${field} must be boolean`);
+    }
+  }
 }
 
 function attachDashboardWebSocket({ server, runtime }) {
