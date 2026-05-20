@@ -20,10 +20,7 @@ test('loadAppConfig keeps configured monitor targets without runtime mode overri
       rules: [
         {
           ruleId: 'burst-create',
-          eventType: 'create',
-          threshold: 2,
-          windowMs: 3000,
-          incidentCooldownMs: 4000
+          eventType: 'create'
         }
       ]
     });
@@ -42,7 +39,7 @@ test('loadAppConfig keeps configured monitor targets without runtime mode overri
   }
 });
 
-test('loadAppConfig normalizes legacy burst settings into create/modify/delete rule definitions', async () => {
+test('loadAppConfig keeps rule arrays without legacy threshold normalization', async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'team404-config-'));
 
   try {
@@ -54,9 +51,6 @@ test('loadAppConfig normalizes legacy burst settings into create/modify/delete r
         targets: [{ id: 'input-target', rootPath: './configured-watch' }]
       },
       rules: {
-        burstWindowMs: 3000,
-        burstThreshold: 4,
-        incidentCooldownMs: 5000,
         severity: 'critical',
         autoQuarantine: true
       }
@@ -64,17 +58,7 @@ test('loadAppConfig normalizes legacy burst settings into create/modify/delete r
 
     const config = await loadAppConfig({ configPath });
 
-    assert.deepEqual(
-      config.rules.definitions.map((rule) => rule.eventType),
-      ['create', 'modify', 'delete']
-    );
-    for (const rule of config.rules.definitions) {
-      assert.equal(rule.threshold, 4);
-      assert.equal(rule.windowMs, 3000);
-      assert.equal(rule.incidentCooldownMs, 5000);
-      assert.equal(rule.severity, 'critical');
-      assert.equal(rule.autoQuarantine, true);
-    }
+    assert.deepEqual(config.rules.definitions, []);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

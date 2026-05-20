@@ -66,7 +66,8 @@ export class QuarantineService {
     this._emitIncidentUpdated(incident.id, INCIDENT_STATUSES.QUARANTINING);
     this.eventBus.emit(EVENT_NAMES.QUARANTINE_STARTED, {
       incidentId: incident.id,
-      rootPath: incident.monitorRootPath
+      rootPath: incident.monitorRootPath,
+      status: INCIDENT_STATUSES.QUARANTINING
     });
     await appendLog({
       eventType: 'quarantine_started',
@@ -259,14 +260,11 @@ export class QuarantineService {
     this.eventBus.emit(EVENT_NAMES.QUARANTINE_FAILED, {
       incidentId: incident.id,
       rootPath: incident.monitorRootPath ?? null,
+      status: INCIDENT_STATUSES.FAILED,
       reason
     });
   }
 }
-
-// ---------------------------------------------------------------------------
-// 내부 헬퍼 함수
-// ---------------------------------------------------------------------------
 
 /**
  * 디렉터리 하위의 모든 파일/폴더 권한을 수집

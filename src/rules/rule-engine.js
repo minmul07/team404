@@ -1,15 +1,24 @@
 import crypto from 'node:crypto';
 
-import { EVENT_NAMES } from '../shared/contracts/event-names.js';
+import { EVENT_NAMES, FILE_EVENT_TYPES } from '../shared/contracts/event-names.js';
+import { getExtensionWeight, loadExtensionWeights } from './extension-weight-loader.js';
+
+const BURST_RULE_ID = 'extension-weight-burst';
+const BURST_THRESHOLD = 10;
+const BUCKET_MS = 1000;
+const DETECTABLE_EVENT_TYPES = new Set([
+  FILE_EVENT_TYPES.CREATE,
+  FILE_EVENT_TYPES.MODIFY,
+  FILE_EVENT_TYPES.RENAME
+]);
 
 export class RuleEngine {
   constructor({ eventBus, config }) {
     this.eventBus = eventBus;
-    this.rules = config.rules.definitions;
-    this.rulesByEventType = groupRulesByEventType(this.rules);
-    this.eventsByRuleKey = new Map();
-    this.lastMatchByRuleKey = new Map();
+    this.bucketsByTargetSecond = new Map();
     this.lastMatchAt = null;
+
+    loadExtensionWeights(config.rules ?? {});
 
     this.handleFsEvent = this.handleFsEvent.bind(this);
     this.eventBus.on(EVENT_NAMES.FS_EVENT, this.handleFsEvent);
@@ -21,76 +30,106 @@ export class RuleEngine {
 
   getState() {
     return {
-      activeRuleWindows: this.eventsByRuleKey.size,
-      configuredRules: this.rules.map((rule) => ({
-        ruleId: rule.ruleId,
-        ruleName: rule.ruleName,
-        eventType: rule.eventType,
-        threshold: rule.threshold,
-        windowMs: rule.windowMs,
-        incidentCooldownMs: rule.incidentCooldownMs
-      })),
+      activeRuleWindows: this.bucketsByTargetSecond.size,
+      configuredRules: [
+        {
+          ruleId: BURST_RULE_ID,
+          eventTypes: [...DETECTABLE_EVENT_TYPES],
+          thresholdWeight: BURST_THRESHOLD,
+          bucketMs: BUCKET_MS,
+          severity: 'critical',
+          autoQuarantine: true
+        }
+      ],
       lastMatchAt: this.lastMatchAt
     };
   }
 
   handleFsEvent(event) {
-    const matchingRules = this.rulesByEventType.get(event.type) ?? [];
+    if (!DETECTABLE_EVENT_TYPES.has(event.type)) {
+      return;
+    }
 
-    for (const rule of matchingRules) {
-      const targetKey = event.monitorTargetId ?? event.monitorRootPath ?? 'unknown';
-      const ruleKey = `${targetKey}:${rule.ruleId}`;
-      const nowTs = event.observedTs;
-      const bucket = this.eventsByRuleKey.get(ruleKey) ?? [];
-      const windowStart = nowTs - rule.windowMs;
-      const recent = bucket.filter((item) => item.observedTs >= windowStart);
-      recent.push(event);
-      this.eventsByRuleKey.set(ruleKey, recent);
+    const observedTs = Number.isFinite(event.observedTs) ? event.observedTs : Date.now();
+    const bucketSecond = Math.floor(observedTs / BUCKET_MS);
+    const targetKey = event.monitorTargetId ?? event.monitorRootPath ?? 'unknown';
+    const bucketKey = `${targetKey}:${bucketSecond}`;
+    const extension = parseExtension(event.path);
+    const weight = getExtensionWeight(extension);
+    const bucket = this.bucketsByTargetSecond.get(bucketKey) ?? createBucket(targetKey, bucketSecond);
 
-      const lastMatchTs = this.lastMatchByRuleKey.get(ruleKey);
-      const cooldownElapsed =
-        lastMatchTs === undefined || nowTs - lastMatchTs >= rule.incidentCooldownMs;
+    bucket.totalWeight += weight;
+    bucket.events.push(event);
+    bucket.extensions.push(extension);
+    this.bucketsByTargetSecond.set(bucketKey, bucket);
+    this.cleanupOldBuckets(targetKey, bucketSecond);
 
-      if (recent.length < rule.threshold || !cooldownElapsed) {
-        continue;
+    if (bucket.totalWeight <= BURST_THRESHOLD) {
+      return;
+    }
+
+    const samplePaths = [...new Set(bucket.events.map((item) => item.path))].slice(0, 10);
+    const eventTypes = [...new Set(bucket.events.map((item) => item.type))];
+    const match = {
+      id: crypto.randomUUID(),
+      ruleId: BURST_RULE_ID,
+      ruleName: 'Extension Weight Burst',
+      eventType: event.type,
+      severity: 'critical',
+      autoQuarantine: true,
+      reason: `extension weights reached ${formatWeight(bucket.totalWeight)}>${BURST_THRESHOLD} in 1s`,
+      observedAt: event.observedAt,
+      observedTs,
+      monitorTargetId: event.monitorTargetId,
+      monitorRootPath: event.monitorRootPath,
+      bucketSecond,
+      bucketMs: BUCKET_MS,
+      thresholdWeight: BURST_THRESHOLD,
+      totalWeight: bucket.totalWeight,
+      eventCount: bucket.events.length,
+      samplePaths,
+      targetPaths: samplePaths,
+      eventTypes
+    };
+
+    this.lastMatchAt = event.observedAt;
+    this.eventBus.emit(EVENT_NAMES.RULE_MATCH, match);
+  }
+
+  cleanupOldBuckets(targetKey, currentBucketSecond) {
+    for (const [bucketKey, bucket] of this.bucketsByTargetSecond) {
+      if (bucket.targetKey === targetKey && bucket.bucketSecond < currentBucketSecond - 1) {
+        this.bucketsByTargetSecond.delete(bucketKey);
       }
-
-      const samplePaths = [...new Set(recent.map((item) => item.path))].slice(0, 10);
-      const match = {
-        id: crypto.randomUUID(),
-        ruleId: rule.ruleId,
-        ruleName: rule.ruleName,
-        eventType: rule.eventType,
-        severity: rule.severity,
-        autoQuarantine: rule.autoQuarantine,
-        reason: `${rule.eventType} events reached ${recent.length}/${rule.threshold} within ${rule.windowMs}ms`,
-        observedAt: event.observedAt,
-        observedTs: event.observedTs,
-        monitorTargetId: event.monitorTargetId,
-        monitorRootPath: event.monitorRootPath,
-        windowMs: rule.windowMs,
-        threshold: rule.threshold,
-        eventCount: recent.length,
-        samplePaths,
-        targetPaths: samplePaths,
-        eventTypes: [rule.eventType]
-      };
-
-      this.lastMatchByRuleKey.set(ruleKey, nowTs);
-      this.lastMatchAt = event.observedAt;
-      this.eventBus.emit(EVENT_NAMES.RULE_MATCH, match);
     }
   }
 }
 
-function groupRulesByEventType(rules) {
-  const grouped = new Map();
+function createBucket(targetKey, bucketSecond) {
+  return {
+    targetKey,
+    bucketSecond,
+    totalWeight: 0,
+    events: [],
+    extensions: []
+  };
+}
 
-  for (const rule of rules) {
-    const bucket = grouped.get(rule.eventType) ?? [];
-    bucket.push(rule);
-    grouped.set(rule.eventType, bucket);
+function parseExtension(filePath) {
+  if (typeof filePath !== 'string') {
+    return '';
   }
 
-  return grouped;
+  const fileName = filePath.split('/').pop() ?? '';
+  const lastDotIndex = fileName.lastIndexOf('.');
+
+  if (lastDotIndex < 0 || lastDotIndex === fileName.length - 1) {
+    return '';
+  }
+
+  return fileName.slice(lastDotIndex + 1).toLowerCase();
+}
+
+function formatWeight(weight) {
+  return Number.isInteger(weight) ? String(weight) : weight.toFixed(2);
 }

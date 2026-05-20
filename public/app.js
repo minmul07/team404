@@ -1,4 +1,5 @@
 const API_URL = '/api';
+
 const VIEW_COPY = {
   dashboard: {
     title: '대시보드',
@@ -13,6 +14,7 @@ const VIEW_COPY = {
     subtitle: '운영 설정 화면이 연결되기 전까지 비어있는 상태로 유지됩니다.'
   }
 };
+
 
 const socketProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
 const socket = new WebSocket(`${socketProtocol}://${window.location.host}`);
@@ -29,16 +31,19 @@ socket.onmessage = (event) => {
   const msg = JSON.parse(event.data);
   switch (msg.type) {
     case 'FILE_EVENT':
-      addLogEntry(msg.payload);
+      appendFsEventEntry(normalizeFileEvent(msg.payload));
       break;
-    case 'QUARANTINE_COMPLETED':
-    case 'RESTORE_COMPLETED':
     case 'RULE_MATCH':
-    case 'SYSTEM_HEALTH':
-      loadState();
+    case 'QUARANTINE_STARTED':
+    case 'QUARANTINE_COMPLETED':
+    case 'QUARANTINE_FAILED':
+    case 'RESTORE_COMPLETED':
+      appendIncidentEntry(normalizeIncidentEvent(msg));
+      loadState(); // refresh stats + quarantine table
       break;
   }
 };
+
 
 function setServerStatus(status, label) {
   const dot = document.getElementById('status-dot');
@@ -46,6 +51,7 @@ function setServerStatus(status, label) {
   if (dot) dot.className = `dot ${status}`;
   if (text) text.innerText = label;
 }
+
 
 async function loadState() {
   try {
@@ -61,8 +67,18 @@ async function loadState() {
     const target = snapshot.activeTarget;
     const targetPath = (target?.rootPath ?? target) || '없음';
     document.getElementById('target-path').innerText = targetPath;
+
+    const qCount = document.getElementById('quarantine-count');
+    if (qCount) qCount.innerText = snapshot.quarantineJobs?.length ?? 0;
+
+    const wCount = document.getElementById('watching-count');
+    if (wCount) wCount.innerText = snapshot.watchEnabled ? '1' : '0';
+
+    updateWatchButtonLabel(snapshot.watchEnabled);
+
     updateQuarantineTable(snapshot.quarantineJobs ?? []);
-    updateLog(alerts.items ?? [], incidents.items ?? []);
+
+    renderIncidentTable(incidents.items ?? []);
   } catch (err) {
     console.error('데이터 로드 실패', err);
   }
@@ -71,6 +87,47 @@ async function loadState() {
 async function loadInitialState() {
   return loadState();
 }
+
+
+function updateWatchButtonLabel(enabled) {
+  const btn = document.getElementById('btn-watch-toggle');
+  if (btn) {
+    btn.innerText = enabled ? '감시 중지' : '감시 시작';
+    btn.dataset.enabled = String(enabled);
+  }
+}
+
+async function handleWatchToggle() {
+  const btn = document.getElementById('btn-watch-toggle');
+  if (!btn) return;
+  btn.disabled = true;
+  const nextEnabled = btn.dataset.enabled !== 'true';
+
+  try {
+    const response = await fetch(`${API_URL}/watch/toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: nextEnabled })
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      updateWatchButtonLabel(data.watchEnabled);
+      const wCount = document.getElementById('watching-count');
+      if (wCount) wCount.innerText = data.watchEnabled ? '1' : '0';
+      showNotification(data.watchEnabled ? '감시가 시작되었습니다.' : '감시가 중지되었습니다.');
+    } else {
+      const error = await response.json();
+      alert(`감시 토글 실패: ${error.error || '알 수 없는 오류'}`);
+    }
+  } catch (err) {
+    console.error(err);
+    alert('감시 토글 요청 중 네트워크 오류가 발생했습니다.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 
 async function handleDemoStart() {
   const btn = document.getElementById('btn-demo-start');
@@ -136,6 +193,7 @@ async function handleDemoStop() {
   }
 }
 
+
 async function handleRestore(incidentId, btn) {
   const originalText = btn?.innerText ?? '복구';
   if (btn) {
@@ -166,6 +224,7 @@ async function handleRestore(incidentId, btn) {
   }
 }
 
+
 function updateQuarantineTable(jobs) {
   const list = document.getElementById('quarantine-list');
   const count = document.getElementById('quarantine-count');
@@ -181,52 +240,196 @@ function updateQuarantineTable(jobs) {
     return;
   }
 
-  list.innerHTML = jobs.map(job => `
+  list.innerHTML = jobs.map(job => {
+    const status = job.status ?? 'quarantined';
+    const statusLabel = getStatusLabel(status);
+    const canRestore = status === 'quarantined';
+    return `
     <tr>
       <td>${escapeHtml(job.incidentId.substring(0, 8))}...</td>
       <td class="path-cell" title="${escapeHtml(job.rootPath)}">${escapeHtml(job.rootPath)}</td>
       <td>${Number(job.entryCount) || 0}개</td>
-      <td><span class="badge danger">격리(400/500)</span></td>
+      <td><span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabel)}</span></td>
       <td>
-        <button class="btn-restore" type="button" data-incident-id="${escapeHtml(job.incidentId)}">복구</button>
+        ${canRestore
+          ? `<button class="btn-restore" type="button" data-incident-id="${escapeHtml(job.incidentId)}">복구</button>`
+          : `<span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabel)}</span>`}
       </td>
     </tr>
-  `).join('');
-}
-
-function updateLog(alerts, incidents = []) {
-  const container = document.getElementById('log-container');
-  if (!container) return;
-
-  const restoredIncidents = incidents.filter(i => i.status === 'restored');
-  if (alerts.length === 0 && restoredIncidents.length === 0) {
-    container.innerHTML = '<div class="empty-state">대기 중 - 이벤트 없음</div>';
-    return;
-  }
-
-  const restoreEntries = restoredIncidents.map(i => ({
-    _type: 'restore',
-    observedAt: i.updatedAt,
-    rootPath: i.monitorRootPath,
-    samplePaths: i.samplePaths ?? []
-  }));
-
-  const allEntries = [
-    ...alerts.map(a => ({ _type: 'alert', ...a })),
-    ...restoreEntries
-  ].sort((a, b) => new Date(b.observedAt) - new Date(a.observedAt)).slice(0, 20);
-
-  container.innerHTML = allEntries.map((entry) => {
-    if (entry._type === 'restore') {
-      return renderRestoreEntry(entry);
-    }
-    return renderAlertEntry(entry);
+  `;
   }).join('');
 }
 
+function getStatusLabel(status) {
+  const labels = {
+    quarantining: '격리 중',
+    quarantined: '격리됨',
+    failed: '실패',
+    restored: '복구됨'
+  };
+  return labels[status] ?? status;
+}
+
+
+function renderIncidentTable(incidents) {
+  const list = document.getElementById('quarantine-list');
+  if (!list) return;
+
+  if (incidents.length === 0) {
+    list.innerHTML = `
+      <tr>
+        <td class="empty-row" colspan="5">등록된 Incident가 없습니다.</td>
+      </tr>
+    `;
+    return;
+  }
+
+  list.innerHTML = incidents.map(inc => {
+    const id = inc.id ?? inc.incidentId ?? '-';
+    const path = inc.monitorRootPath ?? '-';
+    const count = (inc.samplePaths ?? []).length;
+    const status = inc.status ?? 'open';
+    const statusLabel = getStatusLabel(status);
+    const shortId = String(id).substring(0, 8);
+    const canRestore = status === 'quarantined';
+
+    return `
+    <tr>
+      <td>${escapeHtml(shortId)}...</td>
+      <td class="path-cell" title="${escapeHtml(path)}">${escapeHtml(path)}</td>
+      <td>${count}개</td>
+      <td><span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabel)}</span></td>
+      <td>
+        ${canRestore
+          ? `<button class="btn-restore" type="button" data-incident-id="${escapeHtml(id)}">복구</button>`
+          : `<span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabel)}</span>`}
+      </td>
+    </tr>
+  `;
+  }).join('');
+}
+
+
+function appendFsEventEntry(entry) {
+  const container = document.getElementById('fs-event-log-container');
+  if (!container) return;
+
+  const empty = container.querySelector('.empty-state');
+  if (empty) empty.remove();
+
+  const el = document.createElement('div');
+  el.innerHTML = renderFileEventEntry(entry);
+  const child = el.firstElementChild;
+  if (!child) return;
+
+  child.style.opacity = '0';
+  child.style.transform = 'translateY(-8px)';
+  child.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+  container.prepend(child);
+
+  requestAnimationFrame(() => {
+    child.style.opacity = '1';
+    child.style.transform = 'translateY(0)';
+  });
+
+  while (container.children.length > 100) {
+    container.lastElementChild?.remove();
+  }
+}
+
+
+function appendIncidentEntry(entry) {
+  const container = document.getElementById('incident-log-container');
+  if (!container) return;
+
+  const empty = container.querySelector('.empty-state');
+  if (empty) empty.remove();
+
+  let html;
+  switch (entry._type) {
+    case 'rule_match':
+      html = renderAlertEntry(entry);
+      break;
+    case 'quarantine':
+      html = renderQuarantineEntry(entry);
+      break;
+    case 'restore':
+      html = renderRestoreEntry(entry);
+      break;
+    default:
+      html = renderAlertEntry(entry);
+  }
+
+  const el = document.createElement('div');
+  el.innerHTML = html;
+  const child = el.firstElementChild;
+  if (!child) return;
+
+  child.style.opacity = '0';
+  child.style.transform = 'translateY(-8px)';
+  child.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+  container.prepend(child);
+
+  requestAnimationFrame(() => {
+    child.style.opacity = '1';
+    child.style.transform = 'translateY(0)';
+  });
+
+  while (container.children.length > 100) {
+    container.lastElementChild?.remove();
+  }
+}
+
+
+function normalizeFileEvent(payload) {
+  return {
+    _type: 'file',
+    eventType: payload.type ?? 'event',
+    path: payload.path,
+    pid: payload.pid,
+    observedAt: payload.observedAt ?? new Date().toISOString()
+  };
+}
+
+function normalizeIncidentEvent(msg) {
+  const payload = msg.payload ?? {};
+  switch (msg.type) {
+    case 'RULE_MATCH':
+      return {
+        _type: 'rule_match',
+        ruleId: payload.ruleId,
+        ruleName: payload.ruleName,
+        severity: payload.severity,
+        reason: payload.reason,
+        samplePaths: payload.samplePaths ?? [],
+        observedAt: payload.observedAt ?? new Date().toISOString()
+      };
+    case 'QUARANTINE_STARTED':
+    case 'QUARANTINE_COMPLETED':
+    case 'QUARANTINE_FAILED':
+      return {
+        _type: 'quarantine',
+        status: msg.type.replace('QUARANTINE_', '').toLowerCase(),
+        incidentId: payload.incidentId,
+        rootPath: payload.rootPath,
+        entryCount: payload.entryCount,
+        observedAt: payload.observedAt ?? new Date().toISOString()
+      };
+    case 'RESTORE_COMPLETED':
+      return {
+        _type: 'restore',
+        incidentId: payload.incidentId,
+        rootPath: payload.rootPath,
+        observedAt: payload.observedAt ?? new Date().toISOString()
+      };
+    default:
+      return { _type: 'alert', ...payload, observedAt: payload.observedAt ?? new Date().toISOString() };
+  }
+}
+
+
 function renderRestoreEntry(entry) {
   const time = formatTime(entry.observedAt);
-  const files = extractFileNames(entry.samplePaths);
   return `
     <div class="log-entry restore">
       <div class="log-meta">
@@ -234,18 +437,17 @@ function renderRestoreEntry(entry) {
         <span class="severity low">RESTORED</span>
         <span class="log-type">권한 복원 완료</span>
       </div>
-      ${renderFileChips(files)}
+      <div class="log-reason">ID: ${escapeHtml(entry.incidentId ?? '-')}</div>
     </div>
   `;
 }
 
 function renderAlertEntry(alert) {
   const time = formatTime(alert.observedAt);
-  const type = alert.eventType?.toUpperCase() ?? 'MATCH';
+  const type = alert.ruleId ? 'RULE_MATCH' : (alert.eventType?.toUpperCase() ?? 'MATCH');
   const severity = alert.severity?.toUpperCase() ?? 'HIGH';
-  const typeClass = `alert-${type.toLowerCase()}`;
+  const typeClass = `alert-${type.toLowerCase().replace(/_/g, '-')}`;
   const severityClass = severity.toLowerCase();
-  const files = extractFileNames(alert.samplePaths);
 
   return `
     <div class="log-entry ${typeClass}">
@@ -253,21 +455,47 @@ function renderAlertEntry(alert) {
         <span class="log-time">${time}</span>
         <span class="severity ${escapeHtml(severityClass)}">${escapeHtml(severity)}</span>
         <span class="log-type">${escapeHtml(type)}</span>
-        <span class="log-rule">${escapeHtml(alert.ruleName ?? '')}</span>
+        ${alert.ruleName ? `<span class="log-rule">${escapeHtml(alert.ruleName)}</span>` : ''}
       </div>
-      ${renderFileChips(files)}
-      <div class="log-reason">${escapeHtml(alert.reason ?? '')}</div>
+      ${alert.samplePaths?.length ? renderFileChips(extractFileNames(alert.samplePaths)) : ''}
+      ${alert.reason ? `<div class="log-reason">${escapeHtml(alert.reason)}</div>` : ''}
     </div>
   `;
 }
 
-function addLogEntry(payload) {
-  const container = document.getElementById('log-container');
-  if (!container) return;
-  const div = document.createElement('div');
-  div.className = `log-entry ${payload.type}`;
-  div.innerHTML = `<strong>[${escapeHtml(payload.type)}]</strong> ${escapeHtml(payload.path)} (PID: ${escapeHtml(String(payload.pid ?? '-'))})`;
-  container.prepend(div);
+function renderQuarantineEntry(entry) {
+  const time = formatTime(entry.observedAt);
+  const statusLabel = entry.status.toUpperCase();
+  const severityClass = entry.status === 'completed' ? 'success' : entry.status === 'failed' ? 'danger' : 'low';
+
+  return `
+    <div class="log-entry alert-quarantine">
+      <div class="log-meta">
+        <span class="log-time">${time}</span>
+        <span class="severity ${severityClass}">${escapeHtml(statusLabel)}</span>
+        <span class="log-type">QUARANTINE</span>
+      </div>
+      <div class="log-path">${escapeHtml(entry.rootPath ?? '-')}</div>
+      <div class="log-reason">ID: ${escapeHtml(entry.incidentId ?? '-')} · ${Number(entry.entryCount) || 0}개 항목</div>
+    </div>
+  `;
+}
+
+function renderFileEventEntry(entry) {
+  const time = formatTime(entry.observedAt);
+  const type = String(entry.eventType ?? 'event').toUpperCase();
+  const typeClass = `file-${type.toLowerCase()}`;
+  return `
+    <div class="log-entry ${escapeHtml(typeClass)}">
+      <div class="log-meta">
+        <span class="log-time">${time}</span>
+        <span class="severity low">FILE</span>
+        <span class="log-type">${escapeHtml(type)}</span>
+      </div>
+      <div class="log-path">${escapeHtml(entry.path ?? '')}</div>
+      <div class="log-reason">PID: ${escapeHtml(String(entry.pid ?? '-'))}</div>
+    </div>
+  `;
 }
 
 function renderFileChips(files) {
@@ -340,8 +568,10 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
+
 document.getElementById('btn-demo-start')?.addEventListener('click', handleDemoStart);
 document.getElementById('btn-demo-stop')?.addEventListener('click', handleDemoStop);
+document.getElementById('btn-watch-toggle')?.addEventListener('click', handleWatchToggle);
 
 document.querySelector('.menu')?.addEventListener('click', (event) => {
   const item = event.target.closest('[data-view]');
@@ -355,7 +585,7 @@ document.getElementById('quarantine-list')?.addEventListener('click', (event) =>
   handleRestore(btn.dataset.incidentId, btn);
 });
 
+
 loadInitialState();
 checkHealth();
-setInterval(loadState, 3000);
 setInterval(checkHealth, 5000);

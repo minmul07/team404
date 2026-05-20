@@ -31,6 +31,7 @@
                     <span id="status-dot" class="dot offline"></span>
                     <span id="server-status-text">서버 연결 중...</span>
                 </div>
+                <button id="btn-watch-toggle" class="btn-watch-toggle" type="button">감시 시작</button>
                 <div class="controls">
                     <button id="btn-demo-start" class="btn-primary">데모 시작</button>
                     <button id="btn-demo-stop" class="btn-secondary">데모 중지</button>
@@ -45,6 +46,10 @@
                     <p id="quarantine-count">0</p>
                 </div>
                 <div class="card stat-card">
+                    <h2>감시 중인 항목</h2>
+                    <p id="watching-count">0</p>
+                </div>
+                <div class="card stat-card">
                     <h2>감시 디렉터리</h2>
                     <p id="target-path">-</p>
                 </div>
@@ -52,10 +57,18 @@
 
             <section class="card">
                 <div class="section-header">
-                    <h2>실시간 파일 이벤트 로그</h2>
+                    <h2>파일시스템 이벤트</h2>
                     <span class="section-kicker">Live</span>
                 </div>
-                <div id="log-container" class="log-viewer"></div>
+                <div id="fs-event-log-container" class="log-viewer"></div>
+            </section>
+
+            <section class="card">
+                <div class="section-header">
+                    <h2>Incident 및 격리 로그</h2>
+                    <span class="section-kicker">Response</span>
+                </div>
+                <div id="incident-log-container" class="log-viewer"></div>
             </section>
 
             <section class="card">

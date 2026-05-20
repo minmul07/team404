@@ -140,6 +140,29 @@ test('createApiServer upgrades dashboard WebSocket and broadcasts runtime events
     const fileEventMessage = decodeWebSocketFrame(socket.chunks[2]);
     assert.equal(fileEventMessage.type, 'FILE_EVENT');
     assert.equal(fileEventMessage.payload.path, '/tmp/demo-target/example.txt');
+
+    runtime.eventBus.emit(EVENT_NAMES.QUARANTINE_STARTED, {
+      incidentId: 'test-incident-1',
+      rootPath: '/tmp/demo-target',
+      status: 'quarantining'
+    });
+
+    const quarantineStartedMessage = decodeWebSocketFrame(socket.chunks[3]);
+    assert.equal(quarantineStartedMessage.type, 'QUARANTINE_STARTED');
+    assert.equal(quarantineStartedMessage.payload.incidentId, 'test-incident-1');
+    assert.equal(quarantineStartedMessage.payload.status, 'quarantining');
+
+    runtime.eventBus.emit(EVENT_NAMES.QUARANTINE_FAILED, {
+      incidentId: 'test-incident-2',
+      rootPath: '/tmp/demo-target',
+      status: 'failed',
+      reason: 'test failure'
+    });
+
+    const quarantineFailedMessage = decodeWebSocketFrame(socket.chunks[4]);
+    assert.equal(quarantineFailedMessage.type, 'QUARANTINE_FAILED');
+    assert.equal(quarantineFailedMessage.payload.incidentId, 'test-incident-2');
+    assert.equal(quarantineFailedMessage.payload.status, 'failed');
   } finally {
     server.emit('close');
   }

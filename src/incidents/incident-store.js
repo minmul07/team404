@@ -33,12 +33,22 @@ export class IncidentStore {
 
     this.handleIncidentStatusUpdate = this.handleIncidentStatusUpdate.bind(this);
     this.eventBus.on(EVENT_NAMES.INCIDENT_UPDATED, this.handleIncidentStatusUpdate);
+
+    this.handleQuarantineStarted = this.handleQuarantineStarted.bind(this);
+    this.handleQuarantineCompleted = this.handleQuarantineCompleted.bind(this);
+    this.handleQuarantineFailed = this.handleQuarantineFailed.bind(this);
+    this.eventBus.on(EVENT_NAMES.QUARANTINE_STARTED, this.handleQuarantineStarted);
+    this.eventBus.on(EVENT_NAMES.QUARANTINE_COMPLETED, this.handleQuarantineCompleted);
+    this.eventBus.on(EVENT_NAMES.QUARANTINE_FAILED, this.handleQuarantineFailed);
   }
 
   stop() {
     this.eventBus.off(EVENT_NAMES.RULE_MATCH, this.handleRuleMatch);
     this.eventBus.off(EVENT_NAMES.RESTORE_COMPLETED, this.handleRestoreCompleted);
     this.eventBus.off(EVENT_NAMES.INCIDENT_UPDATED, this.handleIncidentStatusUpdate);
+    this.eventBus.off(EVENT_NAMES.QUARANTINE_STARTED, this.handleQuarantineStarted);
+    this.eventBus.off(EVENT_NAMES.QUARANTINE_COMPLETED, this.handleQuarantineCompleted);
+    this.eventBus.off(EVENT_NAMES.QUARANTINE_FAILED, this.handleQuarantineFailed);
   }
 
   handleRestoreCompleted({ incidentId }) {
@@ -46,6 +56,10 @@ export class IncidentStore {
     if (incident) {
       incident.status = INCIDENT_STATUSES.RESTORED;
       incident.updatedAt = new Date().toISOString();
+    }
+    const job = this.quarantineJobs.find(j => j.incidentId === incidentId);
+    if (job) {
+      job.status = INCIDENT_STATUSES.RESTORED;
     }
   }
 
@@ -138,6 +152,37 @@ export class IncidentStore {
     if (!incident) return;
     incident.status = payload.status;
     incident.updatedAt = payload.updatedAt ?? new Date().toISOString();
+  }
+
+  handleQuarantineStarted({ incidentId, rootPath, status }) {
+    const existing = this.quarantineJobs.find(j => j.incidentId === incidentId);
+    if (existing) {
+      existing.status = status;
+      existing.rootPath = rootPath ?? existing.rootPath;
+    } else {
+      this.quarantineJobs.unshift({ incidentId, rootPath, status });
+    }
+  }
+
+  handleQuarantineCompleted({ incidentId, rootPath, status, quarantinedAt, entryCount }) {
+    const existing = this.quarantineJobs.find(j => j.incidentId === incidentId);
+    if (existing) {
+      existing.status = status;
+      existing.quarantinedAt = quarantinedAt;
+      existing.entryCount = entryCount;
+    } else {
+      this.quarantineJobs.unshift({ incidentId, rootPath, status, quarantinedAt, entryCount });
+    }
+  }
+
+  handleQuarantineFailed({ incidentId, rootPath, status, reason }) {
+    const existing = this.quarantineJobs.find(j => j.incidentId === incidentId);
+    if (existing) {
+      existing.status = status;
+      existing.reason = reason;
+    } else {
+      this.quarantineJobs.unshift({ incidentId, rootPath, status, reason });
+    }
   }
 
   getActiveIncident(targetKey) {

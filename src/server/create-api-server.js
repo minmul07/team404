@@ -52,7 +52,7 @@ export async function handleApiRequest({ runtime, request, response }) {
   }
 
   if (request.method === 'GET' && url.pathname === API_ROUTES.HEALTH) {
-    return writeJson(response, 200, runtime.getHealth());
+    return writeJson(response, 200, normalizeHealth(runtime.getHealth()));
   }
 
   if (request.method === 'GET' && url.pathname === API_ROUTES.INCIDENTS) {
@@ -68,7 +68,7 @@ export async function handleApiRequest({ runtime, request, response }) {
   }
 
   if (request.method === 'GET' && url.pathname === API_ROUTES.SNAPSHOT) {
-    return writeJson(response, 200, runtime.getSnapshot());
+    return writeJson(response, 200, normalizeSnapshot(runtime.getSnapshot()));
   }
 
   if (request.method === 'POST' && url.pathname === API_ROUTES.DEMO_START) {
@@ -87,6 +87,20 @@ export async function handleApiRequest({ runtime, request, response }) {
     }
 
     return writeJson(response, 200, await runtime.setTargetPath(payload.targetPath));
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/watch/toggle') {
+    const payload = await readJsonBody(request);
+
+    if (!payload || typeof payload.enabled !== 'boolean') {
+      throw createBadRequest('enabled is required');
+    }
+
+    return writeJson(
+      response,
+      200,
+      payload.enabled ? await runtime.startWatch() : await runtime.stopWatch()
+    );
   }
 
   const restoreMatch = request.method === 'POST' &&
@@ -137,11 +151,31 @@ function writeJson(response, statusCode, payload) {
   response.end(JSON.stringify(payload, null, 2));
 }
 
+function normalizeHealth(health) {
+  return {
+    ...health,
+    watchEnabled: Boolean(health?.watchEnabled)
+  };
+}
+
+function normalizeSnapshot(snapshot) {
+  const rest = snapshot ?? {};
+  return {
+    ...rest,
+    watchEnabled: Boolean(rest.watchEnabled),
+    quarantineJobs: Array.isArray(rest.quarantineJobs)
+      ? rest.quarantineJobs.map((job) => ({ ...job }))
+      : []
+  };
+}
+
 function attachDashboardWebSocket({ server, runtime }) {
   const clients = new Set();
   const listeners = [
     [EVENT_NAMES.FS_EVENT, (payload) => broadcast({ type: 'FILE_EVENT', payload })],
+    [EVENT_NAMES.QUARANTINE_STARTED, (payload) => broadcast({ type: 'QUARANTINE_STARTED', payload })],
     [EVENT_NAMES.QUARANTINE_COMPLETED, (payload) => broadcast({ type: 'QUARANTINE_COMPLETED', payload })],
+    [EVENT_NAMES.QUARANTINE_FAILED, (payload) => broadcast({ type: 'QUARANTINE_FAILED', payload })],
     [EVENT_NAMES.RESTORE_COMPLETED, (payload) => broadcast({ type: 'RESTORE_COMPLETED', payload })],
     [EVENT_NAMES.RULE_MATCH, (payload) => broadcast({ type: 'RULE_MATCH', payload })],
     [EVENT_NAMES.SYSTEM_HEALTH, (payload) => broadcast({ type: 'SYSTEM_HEALTH', payload })]

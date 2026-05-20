@@ -20,6 +20,7 @@ export async function loadAppConfig(options = {}) {
 
   const monitorTargets = normalizeMonitorTargets(parsed.monitor?.targets, configDir);
   const normalizedRules = normalizeRules(parsed.rules);
+  const customExtensionWeights = normalizeCustomExtensionWeights(parsed.customExtensionWeights);
 
   const config = {
     server: {
@@ -35,6 +36,7 @@ export async function loadAppConfig(options = {}) {
     rules: {
       definitions: normalizedRules
     },
+    customExtensionWeights,
     meta: {
       configPath: resolvedConfigPath,
       configDir,
@@ -71,25 +73,33 @@ function normalizeRules(rawRules) {
     return rawRules.map((rule, index) => normalizeRuleDefinition(rule, index));
   }
 
-  if (rawRules && typeof rawRules === 'object') {
-    return DETECTABLE_FILE_EVENT_TYPES.map((eventType, index) =>
-      normalizeRuleDefinition(
-        {
-          ruleId: `burst-${eventType}`,
-          ruleName: `${capitalize(eventType)} Burst`,
-          eventType,
-          threshold: rawRules.burstThreshold,
-          windowMs: rawRules.burstWindowMs,
-          incidentCooldownMs: rawRules.incidentCooldownMs,
-          severity: rawRules.severity,
-          autoQuarantine: rawRules.autoQuarantine
-        },
-        index
-      )
-    );
+  return [];
+}
+
+function normalizeCustomExtensionWeights(rawCustomExtensionWeights) {
+  if (rawCustomExtensionWeights === undefined) {
+    return undefined;
   }
 
-  return [];
+  if (
+    !rawCustomExtensionWeights ||
+    typeof rawCustomExtensionWeights !== 'object' ||
+    Array.isArray(rawCustomExtensionWeights)
+  ) {
+    throw new Error('customExtensionWeights must be an object with numeric values');
+  }
+
+  const normalizedWeights = {};
+
+  for (const [extension, weight] of Object.entries(rawCustomExtensionWeights)) {
+    if (!Number.isFinite(weight)) {
+      throw new Error(`customExtensionWeights.${extension} must be a number`);
+    }
+
+    normalizedWeights[extension] = weight;
+  }
+
+  return normalizedWeights;
 }
 
 function normalizeRuleDefinition(rule, index) {
@@ -97,9 +107,6 @@ function normalizeRuleDefinition(rule, index) {
     ruleId: rule?.ruleId ?? `rule-${index + 1}`,
     ruleName: rule?.ruleName ?? `${capitalize(rule?.eventType ?? 'unknown')} Burst`,
     eventType: rule?.eventType,
-    threshold: rule?.threshold ?? 5,
-    windowMs: rule?.windowMs ?? 10000,
-    incidentCooldownMs: rule?.incidentCooldownMs ?? 15000,
     severity: rule?.severity ?? 'high',
     autoQuarantine: Boolean(rule?.autoQuarantine)
   };
@@ -120,28 +127,19 @@ function validateConfig(config) {
     }
   }
 
-  if (!Array.isArray(config.rules.definitions) || config.rules.definitions.length === 0) {
-    throw new Error('rules must include at least one definition');
-  }
+  if (Array.isArray(config.rules.definitions)) {
+    const seenRuleIds = new Set();
+    for (const rule of config.rules.definitions) {
+      if (seenRuleIds.has(rule.ruleId)) {
+        throw new Error(`Duplicate ruleId: ${rule.ruleId}`);
+      }
 
-  const seenRuleIds = new Set();
-  for (const rule of config.rules.definitions) {
-    if (seenRuleIds.has(rule.ruleId)) {
-      throw new Error(`Duplicate ruleId: ${rule.ruleId}`);
+      if (!DETECTABLE_FILE_EVENT_TYPES.includes(rule.eventType)) {
+        throw new Error(`Unsupported rule eventType: ${rule.eventType}`);
+      }
+
+      seenRuleIds.add(rule.ruleId);
     }
-
-    if (!DETECTABLE_FILE_EVENT_TYPES.includes(rule.eventType)) {
-      throw new Error(`Unsupported rule eventType: ${rule.eventType}`);
-    }
-
-    assertPositiveInteger(rule.threshold, `rules.${rule.ruleId}.threshold`);
-    assertPositiveInteger(rule.windowMs, `rules.${rule.ruleId}.windowMs`);
-    assertPositiveInteger(
-      rule.incidentCooldownMs,
-      `rules.${rule.ruleId}.incidentCooldownMs`
-    );
-
-    seenRuleIds.add(rule.ruleId);
   }
 
   assertPositiveInteger(config.server.port, 'server.port');

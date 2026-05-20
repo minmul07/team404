@@ -216,6 +216,32 @@ button:disabled {
     background: var(--secondary-hover);
 }
 
+.btn-watch-toggle {
+    min-height: 36px;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--success);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--success);
+    font-size: 0.9rem;
+    font-weight: 700;
+}
+
+.btn-watch-toggle:hover:not(:disabled) {
+    background: var(--success);
+    color: #fff;
+}
+
+.btn-watch-toggle.active {
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
+.btn-watch-toggle.active:hover:not(:disabled) {
+    background: var(--danger);
+    color: #fff;
+}
+
 .view-panel {
     display: flex;
     flex-direction: column;
@@ -323,7 +349,6 @@ button:disabled {
     border-left: 3px solid #94a3b8;
     border-radius: 6px;
     background: rgba(15, 23, 42, 0.92);
-    animation: fadeIn 0.25s ease;
 }
 
 .log-entry.CREATE {
@@ -353,6 +378,21 @@ button:disabled {
     border-left-color: #a855f7;
 }
 
+.log-entry.file-create {
+    border-left-color: var(--success);
+    color: #a7f3d0;
+}
+
+.log-entry.file-modify {
+    border-left-color: var(--warning);
+    color: #fef3c7;
+}
+
+.log-entry.file-delete {
+    border-left-color: var(--danger);
+    color: #fee2e2;
+}
+
 .log-entry.restore {
     border-left-color: var(--success);
 }
@@ -376,13 +416,19 @@ button:disabled {
 }
 
 .log-rule,
-.log-reason {
+.log-reason,
+.log-path {
     color: var(--text-muted);
     font-size: 0.86em;
 }
 
-.log-reason {
+.log-reason,
+.log-path {
     margin-top: 0.35rem;
+    overflow-wrap: anywhere;
+}
+
+.log-reason {
     color: #64748b;
 }
 
@@ -411,6 +457,16 @@ button:disabled {
 .severity.low {
     background: #422006;
     color: #facc15;
+}
+
+.severity.info {
+    background: #082f49;
+    color: #7dd3fc;
+}
+
+.severity.error {
+    background: #450a0a;
+    color: #f87171;
 }
 
 .file-list {
@@ -479,6 +535,53 @@ button:disabled {
     border: 1px solid rgba(239, 68, 68, 0.3);
     background: rgba(239, 68, 68, 0.15);
     color: #f87171;
+}
+
+.badge.quarantining {
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+}
+
+.badge.quarantined {
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+}
+
+.badge.failed {
+    border: 1px solid rgba(100, 116, 139, 0.3);
+    background: rgba(100, 116, 139, 0.15);
+    color: #94a3b8;
+}
+
+.badge.restored {
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+}
+
+.watch-toggle {
+    min-height: 32px;
+    padding: 0.35rem 0.75rem;
+    border: 1px solid var(--warning);
+    border-radius: 6px;
+    background: transparent;
+    color: #fbbf24;
+    font-size: 0.82rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.watch-toggle:hover:not(:disabled) {
+    background: var(--warning);
+    color: #0f172a;
+}
+
+.watch-toggle:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
 }
 
 .btn-restore {
@@ -561,17 +664,6 @@ button:disabled {
     background: var(--secondary);
 }
 
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(-3px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
 @media (max-width: 900px) {
     body {
         display: block;
@@ -591,6 +683,7 @@ button:disabled {
     .menu {
         flex-direction: row;
         overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
     }
 
     .nav-item {
@@ -610,6 +703,27 @@ button:disabled {
     .topbar-actions {
         justify-content: flex-start;
     }
+
+    /* Stat cards stack to single column */
+    .grid-container {
+        grid-template-columns: 1fr;
+    }
+
+    /* Log containers don't overflow */
+    .log-viewer {
+        height: 180px;
+        overflow-x: hidden;
+    }
+
+    /* Incident table horizontally scrollable */
+    .table-wrap {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .data-table {
+        min-width: 560px;
+    }
 }
 
 @media (max-width: 560px) {
@@ -623,8 +737,32 @@ button:disabled {
         width: 100%;
     }
 
+    .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
     .controls button {
-        flex: 1 1 0;
+        flex: 1 1 calc(50% - 0.25rem);
+        min-height: 44px;
+    }
+
+    .topbar-actions {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.65rem;
+    }
+
+    .status-group {
+        justify-content: center;
+    }
+
+    /* Touch-friendly menu items */
+    .nav-item {
+        min-height: 48px;
+        padding: 0.75rem 1rem;
+        font-size: 1rem;
     }
 
     .grid-container {
@@ -637,5 +775,29 @@ button:disabled {
 
     .stat-card p {
         font-size: 1.45rem;
+    }
+
+    /* Split log containers stack vertically */
+    .log-viewer {
+        height: 160px;
+    }
+
+    .section-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+
+    .data-table th,
+    .data-table td {
+        padding: 0.65rem 0.7rem;
+        font-size: 0.84rem;
+    }
+
+    .btn-restore {
+        min-height: 40px;
+        padding: 0.5rem 0.85rem;
+        width: 100%;
+        text-align: center;
     }
 }

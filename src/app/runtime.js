@@ -20,9 +20,10 @@ export function createRuntime(config, options = {}) {
   const state = {
     startedAt: null,
     stoppedAt: null,
+    watchEnabled: true,
     lastFsEventAt: null,
     lastRuleMatchAt: null
-  };
+  }
 
   eventBus.on('fs_event', (event) => {
     state.lastFsEventAt = event.observedAt;
@@ -50,6 +51,27 @@ export function createRuntime(config, options = {}) {
       incidentStore.stop();
       state.stoppedAt = new Date().toISOString();
     },
+    async stopWatch() {
+      if (!state.watchEnabled) {
+        return this.getSnapshot();
+      }
+
+      await monitorService.stop();
+      state.watchEnabled = false;
+      return this.getSnapshot();
+    },
+    async startWatch() {
+      if (state.watchEnabled) {
+        return this.getSnapshot();
+      }
+
+      await monitorService.start();
+      state.watchEnabled = true;
+      return this.getSnapshot();
+    },
+    isWatchEnabled() {
+      return state.watchEnabled;
+    },
     async enableDemoMode() {
       await monitorService.setWatchOptions({ demo: true });
       const target = monitorService.getHealth().activeTarget;
@@ -64,7 +86,9 @@ export function createRuntime(config, options = {}) {
             monitorTargetId: target.id,
             monitorRootPath: target.rootPath
           });
-        }).catch(console.error);
+        }).catch((error) => {
+          console.error(error);
+        });
       }, 500);
       return this.getSnapshot();
     },
@@ -88,6 +112,7 @@ export function createRuntime(config, options = {}) {
         uptimeMs: startedAtTs ? now - startedAtTs : 0,
         lastFsEventAt: state.lastFsEventAt,
         lastRuleMatchAt: state.lastRuleMatchAt,
+        watchEnabled: state.watchEnabled,
         activeMode: monitorHealth.activeMode,
         activeTarget: monitorHealth.activeTarget,
         monitor: monitorHealth,
@@ -99,11 +124,12 @@ export function createRuntime(config, options = {}) {
       const monitorHealth = monitorService.getHealth();
       return {
         health: this.getHealth(),
+        watchEnabled: state.watchEnabled,
         activeMode: monitorHealth.activeMode,
         activeTarget: monitorHealth.activeTarget,
         incidents: incidentStore.getIncidents(),
         alerts: incidentStore.getAlerts(),
-        quarantineJobs: quarantineService.getQuarantineJobs()
+        quarantineJobs: incidentStore.getQuarantineJobs()
       };
     },
     async restoreIncident(incidentId) {
