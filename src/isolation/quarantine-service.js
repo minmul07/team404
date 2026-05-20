@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { EVENT_NAMES, INCIDENT_STATUSES } from '../shared/contracts/event-names.js';
 import { appendLog } from './quarantine-logger.js';
+import { restoreDemoEncryption } from '../simulator/demo.js';
 
 const execAsync = promisify(exec);
 
@@ -13,8 +14,8 @@ const SCRIPTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const QUARANTINE_SCRIPT = path.join(SCRIPTS_DIR, 'quarantine.sh');
 const RESTORE_SCRIPT = path.join(SCRIPTS_DIR, 'restore.sh');
 
-// killProcessesSafe 가 SIGTERM/SIGKILL 을 보낼 수 있는 경로 패턴 (데모용 범위만 허용)
-const SAFE_KILL_PATH_PATTERN = /demo-target|demo/i;
+// killProcessesSafe 가 SIGTERM/SIGKILL 을 보낼 수 있는 경로 세그먼트 (데모용 범위만 허용)
+const SAFE_KILL_PATH_SEGMENT = 'demo-target';
 
 /**
  * QuarantineService
@@ -178,6 +179,8 @@ export class QuarantineService {
         });
       }
 
+      const decryptResult = restoreDemoEncryption(record.rootPath);
+
       this.quarantineRecords.delete(incidentId);
 
       const result = {
@@ -185,7 +188,8 @@ export class QuarantineService {
         rootPath: record.rootPath,
         status: 'restored',
         restoredAt: new Date().toISOString(),
-        entryCount: record.entries.length
+        entryCount: record.entries.length,
+        decryptedFileCount: decryptResult.restoredCount
       };
 
       // 상태: RESTORED
@@ -307,8 +311,8 @@ async function lockPermissions(rootPath) {
   } catch {
     const linuxPath = toLinuxPath(rootPath);
     try {
-      await execAsync(`find ${shellEscape(linuxPath)} -type f -exec chmod 400 {} \\;`);
-      await execAsync(`find ${shellEscape(linuxPath)} -type d -exec chmod 500 {} \\;`);
+      await execAsync(`find ${shellEscape(linuxPath)} -type f -exec chmod 000 {} \\;`);
+      await execAsync(`find ${shellEscape(linuxPath)} -type d -exec chmod 000 {} \\;`);
     } catch {
       // Windows/NTFS 환경에서는 chmod 미지원 - 메모리 기록만 유지
     }
@@ -363,21 +367,35 @@ function parseProgressOutput(stdout) {
 
 /**
  * rootPath 를 점유 중인 프로세스를 종료한다.
- * 안전성을 위해 demo-target 경로만 허용한다.
+ * 안전성을 위해 demo-target 경로만 허용하고, PID가 실제 rootPath 하위 경로를
+ * 점유하는지 /proc 로 재검증한다.
  *
- * 전략: lsof → fuser 순으로 PID 수집, SIGTERM 우선, 실패 시 SIGKILL
+ * 전략: lsof 로 PID 수집, SIGTERM 우선, 실패 시 SIGKILL
  *
  * @param {string} rootPath
  * @returns {Promise<number[]>} 종료 시도한 PID 목록
  */
 async function killProcessesSafe(rootPath) {
-  if (!SAFE_KILL_PATH_PATTERN.test(path.resolve(rootPath))) {
+  const resolvedRootPath = path.resolve(rootPath);
+  if (!isSafeKillRoot(resolvedRootPath)) {
     return [];
   }
 
-  const pids = await collectPids(rootPath);
-  const ownPid = process.pid;
-  const safePids = pids.filter((pid) => pid > 1 && pid !== ownPid);
+  const pids = await collectPids(resolvedRootPath);
+  const excludedPids = new Set([1, process.pid, process.ppid].filter(Boolean));
+  const safePids = [];
+  const seenPids = new Set();
+
+  for (const pid of pids) {
+    if (excludedPids.has(pid) || seenPids.has(pid)) {
+      continue;
+    }
+
+    seenPids.add(pid);
+    if (await processUsesPathUnderRoot(pid, resolvedRootPath)) {
+      safePids.push(pid);
+    }
+  }
 
   const killed = [];
   for (const pid of safePids) {
@@ -397,7 +415,7 @@ async function killProcessesSafe(rootPath) {
 }
 
 /**
- * rootPath 를 사용 중인 PID 목록 수집 (lsof → fuser 순 시도)
+ * rootPath 를 사용 중인 PID 목록 수집 (lsof 만 사용)
  * @param {string} rootPath
  * @returns {Promise<number[]>}
  */
@@ -415,19 +433,73 @@ async function collectPids(rootPath) {
     if (pids.length > 0) return pids;
   } catch { /* lsof 없거나 실패 */ }
 
-  // fuser -m: 마운트 포인트 기반 (fallback)
-  try {
-    const { stdout } = await execAsync(
-      `fuser -m ${shellEscape(rootPath)} 2>/dev/null`
-    );
-    return stdout
-      .trim()
-      .split(/\s+/)
-      .map((s) => parseInt(s, 10))
-      .filter((n) => Number.isFinite(n) && n > 0);
-  } catch { /* fuser 없거나 실패 */ }
-
+  // 마운트 단위 PID 조회는 같은 파일시스템의 프로세스를 넓게 반환할 수 있어 사용하지 않는다.
   return [];
+}
+
+function isSafeKillRoot(rootPath) {
+  return path.resolve(rootPath).split(path.sep).includes(SAFE_KILL_PATH_SEGMENT);
+}
+
+async function processUsesPathUnderRoot(pid, rootPath) {
+  const procPaths = await readProcessPaths(pid);
+  return procPaths.some((procPath) => isPathInside(procPath, rootPath));
+}
+
+async function readProcessPaths(pid) {
+  const procPaths = [];
+  const cwdPath = await readProcLink(`/proc/${pid}/cwd`);
+  if (cwdPath) {
+    procPaths.push(cwdPath);
+  }
+
+  let fdNames = [];
+  try {
+    fdNames = await fs.readdir(`/proc/${pid}/fd`);
+  } catch {
+    return procPaths;
+  }
+
+  for (const fdName of fdNames) {
+    const fdPath = await readProcLink(`/proc/${pid}/fd/${fdName}`);
+    if (fdPath) {
+      procPaths.push(fdPath);
+    }
+  }
+
+  return procPaths;
+}
+
+async function readProcLink(linkPath) {
+  try {
+    const linkTarget = await fs.readlink(linkPath);
+    return normalizeProcPath(linkTarget);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeProcPath(procPath) {
+  if (typeof procPath !== 'string') {
+    return null;
+  }
+
+  const deletedSuffix = ' (deleted)';
+  const normalizedPath = procPath.endsWith(deletedSuffix)
+    ? procPath.slice(0, -deletedSuffix.length)
+    : procPath;
+
+  if (!path.isAbsolute(normalizedPath)) {
+    return null;
+  }
+
+  return path.resolve(normalizedPath);
+}
+
+function isPathInside(candidatePath, rootPath) {
+  const relativePath = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
+  return relativePath === ''
+    || (relativePath !== '' && !relativePath.startsWith('..') && !path.isAbsolute(relativePath));
 }
 
 function toLinuxPath(p) {

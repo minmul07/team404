@@ -2,12 +2,14 @@ import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
 
-export const DEMO_TARGET_DIR = '/tmp/demo-target';
+export const DEMO_TARGET_DIR = 'tmp/demo-target';
 
 const TARGET_DIR = path.resolve(DEMO_TARGET_DIR);
-const BACKUP_FILE = '/tmp/demo-backup.json';
-const LOG_FILE = '/tmp/demo-log.jsonl';
+const BACKUP_FILE = path.resolve('tmp/demo-backup.json');
+const LOG_FILE = path.resolve('tmp/demo-log.jsonl');
 const DEMO_FILE_COUNT = 15;
+const DEMO_DIR_MODE = 0o755;
+const DEMO_FILE_MODE = 0o644;
 
 // JSON 형식으로 파일에 기록 (다른 팀원 연동용)
 function writeLog(entry) {
@@ -15,7 +17,28 @@ function writeLog(entry) {
         timestamp: new Date().toISOString(),
         ...entry
     });
-    fs.appendFileSync(LOG_FILE, line + '\n');
+    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+    appendDemoLog(line + '\n');
+}
+
+function appendDemoLog(line) {
+    try {
+        fs.appendFileSync(LOG_FILE, line);
+        return;
+    } catch (error) {
+        if (error.code !== 'EACCES' && error.code !== 'EPERM') {
+            throw error;
+        }
+    }
+
+    try {
+        fs.unlinkSync(LOG_FILE);
+    } catch (error) {
+        if (error.code !== 'ENOENT') {
+            throw error;
+        }
+    }
+    fs.appendFileSync(LOG_FILE, line);
 }
 
 export async function startAttack(onEvent = null, options = {}) {
@@ -81,32 +104,30 @@ export async function startAttack(onEvent = null, options = {}) {
 }
 
 export function restoreDemo() {
-    if (!fs.existsSync(TARGET_DIR)) {
-        return;
+    restoreDemoTargetPermissions();
+    return restoreDemoEncryption(TARGET_DIR, { removeBackup: true });
+}
+
+export function restoreDemoEncryption(rootPath = TARGET_DIR, options = {}) {
+    const resolvedRootPath = path.resolve(rootPath);
+
+    if (!fs.existsSync(resolvedRootPath)) {
+        return { restoredCount: 0, restoredFiles: [] };
     }
 
-    // 파일 시스템 기반 복구: 폴더에서 .demo.locked 파일 직접 탐색
-    const lockedFiles = fs.readdirSync(TARGET_DIR)
-        .filter(file => file.endsWith('.demo.locked'));
+    const lockedPaths = findLockedFiles(resolvedRootPath);
 
-    if (lockedFiles.length === 0) {
-        return;
+    if (lockedPaths.length === 0) {
+        return { restoredCount: 0, restoredFiles: [] };
     }
 
-    // 백업 파일에서 원본 내용 읽어오기
-    const backup = fs.existsSync(BACKUP_FILE)
-        ? JSON.parse(fs.readFileSync(BACKUP_FILE, 'utf8'))
-        : {};
+    writeLog({ event: 'restore_started', targetDir: resolvedRootPath });
 
-    writeLog({ event: 'restore_started', targetDir: TARGET_DIR });
+    const restoredFiles = lockedPaths.map(lockedPath => {
+        const originalPath = lockedPath.slice(0, -'.demo.locked'.length);
+        const decodedContent = Buffer.from(fs.readFileSync(lockedPath, 'utf8'), 'base64').toString('utf8');
 
-    lockedFiles.forEach(file => {
-        const lockedPath = path.join(TARGET_DIR, file);
-        const originalName = file.replace('.demo.locked', '');
-        const originalPath = path.join(TARGET_DIR, originalName);
-
-        const originalContent = backup[originalName] || 'original content';
-        fs.writeFileSync(lockedPath, originalContent);
+        fs.writeFileSync(lockedPath, decodedContent);
         fs.renameSync(lockedPath, originalPath);
 
         writeLog({
@@ -114,19 +135,30 @@ export function restoreDemo() {
             sourcePath: lockedPath,
             targetPath: originalPath
         });
+
+        return originalPath;
     });
 
-    if (fs.existsSync(BACKUP_FILE)) fs.unlinkSync(BACKUP_FILE);
-    writeLog({ event: 'restore_completed', targetDir: TARGET_DIR });
+    if (options.removeBackup && fs.existsSync(BACKUP_FILE)) fs.unlinkSync(BACKUP_FILE);
+    writeLog({ event: 'restore_completed', targetDir: resolvedRootPath, totalFiles: restoredFiles.length });
+
+    return {
+        restoredCount: restoredFiles.length,
+        restoredFiles
+    };
 }
 
 export function resetDemo() {
+    restoreDemoTargetPermissions();
     fs.rmSync(TARGET_DIR, { recursive: true, force: true });
-    fs.mkdirSync(TARGET_DIR, { recursive: true });
+    fs.mkdirSync(TARGET_DIR, { recursive: true, mode: DEMO_DIR_MODE });
 
     for (let i = 1; i <= DEMO_FILE_COUNT; i++) {
-        fs.writeFileSync(path.join(TARGET_DIR, `file_${i}.txt`), `original content ${i}`);
+        const filePath = path.join(TARGET_DIR, `file_${i}.txt`);
+        fs.writeFileSync(filePath, `original content ${i}`, { mode: DEMO_FILE_MODE });
     }
+
+    restoreDemoTargetPermissions();
 
     if (fs.existsSync(BACKUP_FILE)) fs.unlinkSync(BACKUP_FILE);
     if (fs.existsSync(LOG_FILE)) fs.unlinkSync(LOG_FILE);
@@ -137,6 +169,54 @@ export function resetDemo() {
         targetDir: TARGET_DIR,
         totalFiles: DEMO_FILE_COUNT
     };
+}
+
+function restoreDemoTargetPermissions(rootPath = TARGET_DIR) {
+    if (!fs.existsSync(rootPath)) {
+        return;
+    }
+
+    try {
+        fs.chmodSync(rootPath, DEMO_DIR_MODE);
+    } catch {
+        return;
+    }
+
+    for (const entry of fs.readdirSync(rootPath, { withFileTypes: true })) {
+        const entryPath = path.join(rootPath, entry.name);
+
+        if (entry.isDirectory()) {
+            restoreDemoTargetPermissions(entryPath);
+            continue;
+        }
+
+        if (entry.isFile()) {
+            try {
+                fs.chmodSync(entryPath, DEMO_FILE_MODE);
+            } catch {
+                // 권한 복구 실패 항목은 초기화 삭제 단계에서 force 처리에 맡긴다.
+            }
+        }
+    }
+}
+
+function findLockedFiles(rootPath) {
+    const lockedFiles = [];
+
+    for (const entry of fs.readdirSync(rootPath, { withFileTypes: true })) {
+        const entryPath = path.join(rootPath, entry.name);
+
+        if (entry.isDirectory()) {
+            lockedFiles.push(...findLockedFiles(entryPath));
+            continue;
+        }
+
+        if (entry.isFile() && entry.name.endsWith('.demo.locked')) {
+            lockedFiles.push(entryPath);
+        }
+    }
+
+    return lockedFiles;
 }
 
 if (isDirectCliExecution()) {

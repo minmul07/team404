@@ -282,5 +282,5 @@ function createFallbackTarget() {
 }
 
 function resolveDemoTargetPath(projectRoot) {
-  return path.resolve(DEMO_TARGET_DIR);
+  return path.resolve(projectRoot, DEMO_TARGET_DIR);
 }

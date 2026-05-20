@@ -114,7 +114,7 @@ function updateWatchTargetControls(snapshot) {
     radio.checked = radio.value === mode;
   });
 
-  if (input && document.activeElement !== input) {
+  if (mode === 'normal' && input && document.activeElement !== input) {
     input.value = targetPath;
   }
 

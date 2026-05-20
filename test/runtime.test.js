@@ -7,7 +7,7 @@ import path from 'node:path';
 import { createRuntime } from '../src/app/runtime.js';
 
 const PROJECT_ROOT = process.cwd();
-const DEMO_TARGET_ROOT = '/tmp/demo-target';
+const DEMO_TARGET_ROOT = `${PROJECT_ROOT}/tmp/demo-target`;
 
 function createConfig() {
   return {

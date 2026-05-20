@@ -9,7 +9,7 @@ import { Readable } from 'node:stream';
 import { API_ROUTES, EVENT_NAMES } from '../src/shared/contracts/event-names.js';
 import { createApiServer, handleApiRequest } from '../src/server/create-api-server.js';
 
-const DEMO_TARGET_ROOT = '/tmp/demo-target';
+const DEMO_TARGET_ROOT = `${process.cwd()}/tmp/demo-target`;
 
 test('handleApiRequest starts demo through POST /api/demo/start', async () => {
   const runtime = createRuntimeDouble();

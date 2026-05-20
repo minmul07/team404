@@ -5,7 +5,7 @@ import { MonitorService } from '../src/collector/monitor-service.js';
 import { createEventBus } from '../src/shared/utils/create-event-bus.js';
 
 const PROJECT_ROOT = process.cwd();
-const DEMO_TARGET_ROOT = '/tmp/demo-target';
+const DEMO_TARGET_ROOT = `${PROJECT_ROOT}/tmp/demo-target`;
 
 function createConfig() {
   return {

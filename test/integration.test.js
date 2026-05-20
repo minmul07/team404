@@ -62,6 +62,10 @@ test('integration: detection-to-quarantine-to-restore flow', async () => {
   await fs.mkdir(path.join(tempDir, 'subdir'), { recursive: true });
   await fs.writeFile(path.join(tempDir, 'file1.txt'), 'hello');
   await fs.writeFile(path.join(tempDir, 'subdir', 'file2.txt'), 'world');
+  await fs.writeFile(
+    path.join(tempDir, 'subdir', 'secret.txt.demo.locked'),
+    Buffer.from('secret payload').toString('base64')
+  );
 
   const runtime = createRuntime(createTestConfig(tempDir));
 
@@ -107,15 +111,20 @@ test('integration: detection-to-quarantine-to-restore flow', async () => {
     assert.ok(incident, 'Incident should exist in store');
     assert.equal(incident.status, 'quarantined', 'Incident status should be quarantined');
 
-    await runtime.restoreIncident(incident.id);
+    const restoreResult = await runtime.restoreIncident(incident.id);
 
     assert.ok(captured.restoreCompleted, 'RESTORE_COMPLETED should be emitted');
+    assert.equal(restoreResult.decryptedFileCount, 1);
+    assert.equal(await fs.readFile(path.join(tempDir, 'subdir', 'secret.txt'), 'utf8'), 'secret payload');
+    await assert.rejects(
+      fs.access(path.join(tempDir, 'subdir', 'secret.txt.demo.locked'))
+    );
 
     const restoredIncident = runtime.incidentStore.getIncidents().find(i => i.id === incident.id);
     assert.equal(restoredIncident.status, 'restored', 'Incident status should be restored');
 
-    await runtime.stop();
   } finally {
+    await runtime.stop();
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
