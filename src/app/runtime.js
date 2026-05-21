@@ -20,7 +20,8 @@ const DEMO_STOP_TIMEOUT_MS = 1500;
 export const DEFAULT_RESPONSE_POLICY = Object.freeze({
   lockDirectoryPermissions: true,
   killSuspectProcesses: false,
-  shutdownSystem: false
+  shutdownSystem: false,
+  quarantineScope: 'incident-target'
 });
 
 export function createRuntime(config, options = {}) {
@@ -35,7 +36,8 @@ export function createRuntime(config, options = {}) {
   );
   const quarantineService = new QuarantineService({
     eventBus,
-    getResponsePolicy: () => ({ ...responsePolicy })
+    getResponsePolicy: () => ({ ...responsePolicy }),
+    getWatchTargets: () => monitorService.getHealth().targets
   });
   const monitorService = new MonitorService({
     config,
@@ -122,7 +124,13 @@ export function createRuntime(config, options = {}) {
       return this.getSnapshot();
     },
     async setTargetPath(targetPath) {
-      await monitorService.setWatchOptions({ targetPath });
+      return this.setTargetPaths([targetPath]);
+    },
+    async setTargetPaths(targetPaths) {
+      const targets = normalizeManualWatchTargets(targetPaths);
+      config.monitor.targets = targets;
+      await persistMonitorTargets(config.meta?.configPath, targets);
+      await monitorService.setWatchOptions({ targetPaths: targets.map((target) => target.rootPath) });
       return this.getSnapshot();
     },
     getResponsePolicy() {
@@ -136,6 +144,7 @@ export function createRuntime(config, options = {}) {
       responsePolicy.lockDirectoryPermissions = normalizedPolicy.lockDirectoryPermissions;
       responsePolicy.killSuspectProcesses = normalizedPolicy.killSuspectProcesses;
       responsePolicy.shutdownSystem = normalizedPolicy.shutdownSystem;
+      responsePolicy.quarantineScope = normalizedPolicy.quarantineScope;
       return this.getResponsePolicy();
     },
     async updateDetectionPolicy(nextPolicy = {}) {
@@ -344,12 +353,13 @@ export function createRuntime(config, options = {}) {
     },
     getSnapshot() {
       const monitorHealth = monitorService.getHealth();
-      const watchedFileCount = countFiles(monitorHealth.activeTarget?.rootPath);
+      const watchedFileCount = countTargetFiles(monitorHealth.targets);
       return {
         health: this.getHealth(),
         watchEnabled: state.watchEnabled,
         activeMode: monitorHealth.activeMode,
         activeTarget: monitorHealth.activeTarget,
+        targets: monitorHealth.targets,
         responsePolicy: this.getResponsePolicy(),
         detectionPolicy: this.getDetectionPolicy(),
         demoSettings: this.getDemoSettings(),
@@ -397,12 +407,31 @@ async function persistConfigSection(configPath, key, value) {
   await writeFile(configPath, `${JSON.stringify(parsed, null, 2)}\n`);
 }
 
+async function persistMonitorTargets(configPath, targets) {
+  if (!configPath) {
+    return;
+  }
+
+  const raw = await readFile(configPath, 'utf8');
+  const parsed = JSON.parse(raw);
+  parsed.monitor = {
+    ...parsed.monitor,
+    targets: targets.map((target) => ({ ...target }))
+  };
+  await writeFile(configPath, `${JSON.stringify(parsed, null, 2)}\n`);
+}
+
 export function normalizeResponsePolicy(policy = {}) {
+  const quarantineScope = policy.quarantineScope === 'all-watch-targets'
+    ? 'all-watch-targets'
+    : DEFAULT_RESPONSE_POLICY.quarantineScope;
+
   if (policy.shutdownSystem) {
     return {
       lockDirectoryPermissions: true,
       killSuspectProcesses: true,
-      shutdownSystem: true
+      shutdownSystem: true,
+      quarantineScope
     };
   }
 
@@ -410,14 +439,16 @@ export function normalizeResponsePolicy(policy = {}) {
     return {
       lockDirectoryPermissions: true,
       killSuspectProcesses: true,
-      shutdownSystem: false
+      shutdownSystem: false,
+      quarantineScope
     };
   }
 
   return {
     lockDirectoryPermissions: DEFAULT_RESPONSE_POLICY.lockDirectoryPermissions,
     killSuspectProcesses: DEFAULT_RESPONSE_POLICY.killSuspectProcesses,
-    shutdownSystem: DEFAULT_RESPONSE_POLICY.shutdownSystem
+    shutdownSystem: DEFAULT_RESPONSE_POLICY.shutdownSystem,
+    quarantineScope
   };
 }
 
@@ -676,6 +707,46 @@ function countFiles(rootPath) {
   } catch {
     return 0;
   }
+}
+
+function countTargetFiles(targets = []) {
+  const seenRootPaths = new Set();
+  let total = 0;
+
+  for (const target of targets) {
+    const rootPath = target?.rootPath;
+    if (!rootPath || seenRootPaths.has(rootPath)) {
+      continue;
+    }
+
+    seenRootPaths.add(rootPath);
+    total += countFiles(rootPath);
+  }
+
+  return total;
+}
+
+function normalizeManualWatchTargets(targetPaths = []) {
+  const seenRootPaths = new Set();
+  const targets = [];
+
+  for (const targetPath of targetPaths) {
+    const rootPath = path.resolve(targetPath);
+    if (seenRootPaths.has(rootPath)) {
+      continue;
+    }
+
+    seenRootPaths.add(rootPath);
+    targets.push({
+      id: `manual-${targets.length + 1}`,
+      rootPath,
+      enabled: true,
+      autoQuarantineEnabled: false,
+      demoAllowed: false
+    });
+  }
+
+  return targets;
 }
 
 export function createDemoRuntime() {

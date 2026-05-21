@@ -157,9 +157,10 @@ async function loadState() {
     const snapshotRes = await fetch(`${API_URL}/snapshot`);
     const snapshot = await snapshotRes.json();
 
-    const target = snapshot.activeTarget;
-    const targetPath = (target?.rootPath ?? target) || '없음';
-    document.getElementById('target-path').innerText = targetPath;
+    const targetPaths = getSnapshotTargetPaths(snapshot);
+    document.getElementById('target-path').innerText = targetPaths.length > 0
+      ? targetPaths.join('\n')
+      : '없음';
 
     const wCount = document.getElementById('watching-count');
     if (wCount) wCount.innerText = String(snapshot.watchedFileCount ?? 0);
@@ -198,23 +199,15 @@ function updateWatchButtonLabel(enabled) {
 
 function updateWatchTargetControls(snapshot) {
   const mode = snapshot.activeMode === 'demo' ? 'demo' : 'normal';
-  const targetPath = (snapshot.activeTarget?.rootPath ?? snapshot.activeTarget) || '';
-  const input = document.getElementById('watch-target-input');
   const applyBtn = document.getElementById('btn-watch-target-apply');
   const error = document.getElementById('watch-target-error');
+  const targetPaths = getSnapshotTargetPaths(snapshot);
 
   document.querySelectorAll('input[name="watch-mode"]').forEach((radio) => {
     radio.checked = radio.value === mode;
   });
 
-  if (mode === 'normal' && input && document.activeElement !== input) {
-    input.value = targetPath;
-  }
-
-  if (input) {
-    input.disabled = mode === 'demo';
-    input.classList.remove('invalid');
-  }
+  renderWatchTargetRows(targetPaths, mode === 'demo');
 
   if (applyBtn) {
     applyBtn.disabled = mode === 'demo';
@@ -224,6 +217,53 @@ function updateWatchTargetControls(snapshot) {
     error.hidden = true;
     error.innerText = '';
   }
+}
+
+function getSnapshotTargetPaths(snapshot = {}) {
+  const targets = Array.isArray(snapshot.targets)
+    ? snapshot.targets
+    : (Array.isArray(snapshot.health?.monitor?.targets) ? snapshot.health.monitor.targets : []);
+  const paths = targets
+    .map((target) => target?.rootPath ?? target)
+    .filter(Boolean);
+
+  if (paths.length === 0) {
+    const activeTarget = snapshot.activeTarget?.rootPath ?? snapshot.activeTarget;
+    if (activeTarget) {
+      paths.push(activeTarget);
+    }
+  }
+
+  return [...new Set(paths)];
+}
+
+function renderWatchTargetRows(targetPaths, disabled = false) {
+  const container = document.getElementById('watch-target-list');
+  if (!container) return;
+
+  const activeInput = document.activeElement?.closest?.('.watch-target-input');
+  if (activeInput) {
+    document.querySelectorAll('.watch-target-input').forEach((input) => {
+      input.disabled = disabled;
+      input.classList.remove('invalid');
+    });
+    return;
+  }
+
+  const rowPaths = targetPaths.length > 0 ? [...targetPaths] : [''];
+  if (!disabled && rowPaths[rowPaths.length - 1].trim() !== '') {
+    rowPaths.push('');
+  }
+
+  container.innerHTML = rowPaths.map((targetPath, index) => {
+    const canRemove = !disabled && rowPaths.length > 1 && index < rowPaths.length - 1;
+    return `
+      <div class="watch-path-row" data-watch-path-row>
+        <input class="watch-target-input" type="text" spellcheck="false" placeholder="/path/to/watch" value="${escapeHtml(targetPath)}" ${disabled ? 'disabled' : ''}>
+        ${canRemove ? '<button class="btn-watch-path-remove" type="button" aria-label="감시 디렉터리 제거">×</button>' : ''}
+      </div>
+    `;
+  }).join('');
 }
 
 function updateDemoControls(snapshot) {
@@ -291,15 +331,22 @@ function updateResponsePolicyControls(policy = {}) {
   const lockInput = document.getElementById('policy-lock-permissions');
   const killInput = document.getElementById('policy-kill-processes');
   const shutdownInput = document.getElementById('policy-shutdown-system');
+  const scopeIncidentInput = document.getElementById('scope-incident-target');
+  const scopeAllInput = document.getElementById('scope-all-watch-targets');
   const status = document.getElementById('response-policy-status');
   const error = document.getElementById('response-policy-error');
 
   const selectedLevel = getPolicyLevelFromPolicy(policy);
+  const selectedScope = policy.quarantineScope === 'all-watch-targets' ? 'all-watch-targets' : 'incident-target';
   const activeElement = document.activeElement;
   if (lockInput && killInput && shutdownInput && ![lockInput, killInput, shutdownInput].includes(activeElement)) {
     lockInput.checked = selectedLevel === 'lock';
     killInput.checked = selectedLevel === 'kill';
     shutdownInput.checked = selectedLevel === 'shutdown';
+  }
+  if (scopeIncidentInput && scopeAllInput && ![scopeIncidentInput, scopeAllInput].includes(activeElement)) {
+    scopeIncidentInput.checked = selectedScope === 'incident-target';
+    scopeAllInput.checked = selectedScope === 'all-watch-targets';
   }
 
   if (status) {
@@ -313,9 +360,10 @@ function updateResponsePolicyControls(policy = {}) {
 
 function renderPolicyStatus(policy = {}) {
   const level = getPolicyLevelFromPolicy(policy);
-  if (level === 'shutdown') return '활성화: 3단계';
-  if (level === 'kill') return '활성화: 2단계';
-  return '활성화: 1단계';
+  const scope = policy.quarantineScope === 'all-watch-targets' ? '전체 디렉터리' : '발생 디렉터리';
+  if (level === 'shutdown') return `활성화: 3단계 / ${scope}`;
+  if (level === 'kill') return `활성화: 2단계 / ${scope}`;
+  return `활성화: 1단계 / ${scope}`;
 }
 
 function getPolicyLevelFromPolicy(policy = {}) {
@@ -325,11 +373,16 @@ function getPolicyLevelFromPolicy(policy = {}) {
 }
 
 function getPolicyFromSelectedLevel(level) {
+  const quarantineScope = document.querySelector('input[name="quarantineScope"]:checked')?.value === 'all-watch-targets'
+    ? 'all-watch-targets'
+    : 'incident-target';
+
   if (level === 'shutdown') {
     return {
       lockDirectoryPermissions: true,
       killSuspectProcesses: true,
-      shutdownSystem: true
+      shutdownSystem: true,
+      quarantineScope
     };
   }
 
@@ -337,14 +390,16 @@ function getPolicyFromSelectedLevel(level) {
     return {
       lockDirectoryPermissions: true,
       killSuspectProcesses: true,
-      shutdownSystem: false
+      shutdownSystem: false,
+      quarantineScope
     };
   }
 
   return {
     lockDirectoryPermissions: true,
     killSuspectProcesses: false,
-    shutdownSystem: false
+    shutdownSystem: false,
+    quarantineScope
   };
 }
 
@@ -395,19 +450,18 @@ async function handleWatchModeChange(event) {
 
 async function handleWatchTargetApply() {
   const selectedMode = document.querySelector('input[name="watch-mode"]:checked')?.value ?? 'normal';
-  const input = document.getElementById('watch-target-input');
-  const targetPath = input?.value?.trim();
+  const targetPaths = collectWatchTargetPaths();
 
   if (selectedMode !== 'normal') {
     return;
   }
 
-  if (!targetPath) {
+  if (targetPaths.length === 0) {
     showWatchTargetError('감시할 디렉터리 경로를 입력하세요.');
     return;
   }
 
-  await updateWatchTarget({ mode: 'normal', targetPath });
+  await updateWatchTarget({ mode: 'normal', targetPaths });
 }
 
 async function updateWatchTarget(payload) {
@@ -443,30 +497,63 @@ async function updateWatchTarget(payload) {
 
 function showWatchTargetError(message) {
   const error = document.getElementById('watch-target-error');
-  const input = document.getElementById('watch-target-input');
 
   if (error) {
     error.hidden = false;
     error.innerText = message;
   }
 
-  if (input) {
+  document.querySelectorAll('.watch-target-input').forEach((input) => {
     input.classList.add('invalid');
-  }
+  });
 }
 
 function clearWatchTargetError() {
   const error = document.getElementById('watch-target-error');
-  const input = document.getElementById('watch-target-input');
 
   if (error) {
     error.hidden = true;
     error.innerText = '';
   }
 
-  if (input) {
+  document.querySelectorAll('.watch-target-input').forEach((input) => {
     input.classList.remove('invalid');
+  });
+}
+
+function collectWatchTargetPaths() {
+  return [...document.querySelectorAll('.watch-target-input')]
+    .map((input) => input.value.trim())
+    .filter(Boolean);
+}
+
+function handleWatchTargetInput(event) {
+  const input = event.target.closest('.watch-target-input');
+  if (!input) return;
+
+  clearWatchTargetError();
+  const inputs = [...document.querySelectorAll('.watch-target-input')];
+  const isLastInput = inputs[inputs.length - 1] === input;
+  if (isLastInput && input.value.trim() !== '') {
+    const row = input.closest('[data-watch-path-row]');
+    if (row && !row.querySelector('.btn-watch-path-remove')) {
+      row.insertAdjacentHTML('beforeend', '<button class="btn-watch-path-remove" type="button" aria-label="감시 디렉터리 제거">×</button>');
+    }
+    document.getElementById('watch-target-list')?.insertAdjacentHTML('beforeend', `
+      <div class="watch-path-row" data-watch-path-row>
+        <input class="watch-target-input" type="text" spellcheck="false" placeholder="/path/to/watch">
+      </div>
+    `);
   }
+}
+
+function handleWatchPathRemove(event) {
+  const btn = event.target.closest('.btn-watch-path-remove');
+  if (!btn) return;
+
+  const row = btn.closest('[data-watch-path-row]');
+  row?.remove();
+  clearWatchTargetError();
 }
 
 
@@ -628,6 +715,32 @@ async function handleResponsePolicySave(event) {
       saveBtn.disabled = false;
       saveBtn.innerText = '저장';
     }
+  }
+}
+
+async function handleQuarantineScopeChange() {
+  const selectedLevel = document.querySelector('input[name="responsePolicyLevel"]:checked')?.value ?? 'lock';
+  const payload = getPolicyFromSelectedLevel(selectedLevel);
+
+  try {
+    const response = await fetch(`${API_URL}/settings/response-policy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      showDetectionPolicyError(error.message || error.error || '격리 범위 저장 실패');
+      return;
+    }
+
+    const policy = await response.json();
+    updateResponsePolicyControls(policy);
+    showNotification('격리 범위가 저장되었습니다.');
+  } catch (err) {
+    console.error(err);
+    showDetectionPolicyError('격리 범위 저장 중 네트워크 오류가 발생했습니다.');
   }
 }
 
@@ -977,10 +1090,14 @@ function updateQuarantineTable(jobs) {
     const status = job.status ?? 'quarantined';
     const statusLabel = getStatusLabel(status);
     const canRestore = status === 'quarantined';
+    const pathLabel = formatRootPaths(job.rootPaths, job.rootPath);
+    const pathTitle = Array.isArray(job.rootPaths) && job.rootPaths.length > 0
+      ? job.rootPaths.join('\n')
+      : (job.rootPath ?? '');
     return `
     <tr>
       <td>${escapeHtml(job.incidentId.substring(0, 8))}...</td>
-      <td class="path-cell" title="${escapeHtml(job.rootPath)}">${escapeHtml(job.rootPath)}</td>
+      <td class="path-cell" title="${escapeHtml(pathTitle)}">${escapeHtml(pathLabel)}</td>
       <td title="권한 레코드 ${Number(job.permissionEntryCount) || Number(job.entryCount) || 0}개">${Number(job.entryCount) || 0}개</td>
       <td><span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabel)}</span></td>
       <td>
@@ -1139,6 +1256,7 @@ function normalizeIncidentEvent(msg) {
         status: msg.type.replace('QUARANTINE_', '').toLowerCase(),
         incidentId: payload.incidentId,
         rootPath: payload.rootPath,
+        rootPaths: payload.rootPaths ?? [],
         entryCount: payload.entryCount,
         observedAt: payload.observedAt ?? new Date().toISOString()
       };
@@ -1147,6 +1265,7 @@ function normalizeIncidentEvent(msg) {
         _type: 'restore',
         incidentId: payload.incidentId,
         rootPath: payload.rootPath,
+        rootPaths: payload.rootPaths ?? [],
         observedAt: payload.observedAt ?? new Date().toISOString()
       };
     case 'DEMO_STARTED':
@@ -1221,6 +1340,7 @@ function renderQuarantineEntry(entry) {
   const time = formatTime(entry.observedAt);
   const statusLabel = entry.status.toUpperCase();
   const severityClass = entry.status === 'completed' ? 'success' : entry.status === 'failed' ? 'danger' : 'low';
+  const pathLabel = formatRootPaths(entry.rootPaths, entry.rootPath);
 
   return `
     <div class="log-entry alert-quarantine">
@@ -1229,10 +1349,19 @@ function renderQuarantineEntry(entry) {
         <span class="severity ${severityClass}">${escapeHtml(statusLabel)}</span>
         <span class="log-type">QUARANTINE</span>
       </div>
-      <div class="log-path">${escapeHtml(entry.rootPath ?? '-')}</div>
+      <div class="log-path">${escapeHtml(pathLabel)}</div>
       <div class="log-reason">ID: ${escapeHtml(entry.incidentId ?? '-')} · ${Number(entry.entryCount) || 0}개 항목</div>
     </div>
   `;
+}
+
+function formatRootPaths(rootPaths = [], fallback = '-') {
+  const paths = Array.isArray(rootPaths) && rootPaths.length > 0 ? rootPaths : [fallback].filter(Boolean);
+  if (paths.length <= 1) {
+    return paths[0] ?? '-';
+  }
+
+  return `${paths[0]} 외 ${paths.length - 1}개`;
 }
 
 function renderFileEventEntry(entry) {
@@ -1361,6 +1490,8 @@ document.getElementById('btn-demo-action')?.addEventListener('click', handleDemo
 document.getElementById('btn-demo-reset')?.addEventListener('click', handleDemoReset);
 document.getElementById('btn-watch-toggle')?.addEventListener('click', handleWatchToggle);
 document.getElementById('btn-watch-target-apply')?.addEventListener('click', handleWatchTargetApply);
+document.getElementById('watch-target-list')?.addEventListener('input', handleWatchTargetInput);
+document.getElementById('watch-target-list')?.addEventListener('click', handleWatchPathRemove);
 document.getElementById('response-policy-form')?.addEventListener('submit', handleResponsePolicySave);
 document.getElementById('demo-settings-form')?.addEventListener('submit', handleDemoSettingsSave);
 document.getElementById('detection-policy-form')?.addEventListener('submit', handleDetectionPolicySave);
@@ -1376,6 +1507,9 @@ document.getElementById('allowed-extension-input')?.addEventListener('keydown', 
   }
 });
 document.getElementById('allowed-extension-list')?.addEventListener('click', handleAllowedExtensionRemove);
+document.querySelectorAll('input[name="quarantineScope"]').forEach((radio) => {
+  radio.addEventListener('change', handleQuarantineScopeChange);
+});
 document.querySelectorAll('input[name="dashboard-theme"]').forEach((radio) => {
   radio.addEventListener('change', handleThemeChange);
 });

@@ -70,8 +70,12 @@
                             <span>데모 폴더 감시</span>
                         </label>
                     </fieldset>
-                    <div class="watch-path-row">
-                        <input id="watch-target-input" type="text" spellcheck="false" placeholder="/path/to/watch">
+                    <div id="watch-target-list" class="watch-path-list">
+                        <div class="watch-path-row" data-watch-path-row>
+                            <input class="watch-target-input" type="text" spellcheck="false" placeholder="/path/to/watch">
+                        </div>
+                    </div>
+                    <div class="watch-path-actions">
                         <button id="btn-watch-target-apply" class="btn-secondary" type="button">적용</button>
                     </div>
                     <p id="watch-target-error" class="field-error" hidden></p>
@@ -119,6 +123,16 @@
                     <h2>감시 가중치</h2>
                 </div>
                 <form id="detection-policy-form" class="detection-policy-form">
+                    <fieldset class="quarantine-scope-group" aria-label="Incident 격리 범위">
+                        <label class="radio-option">
+                            <input id="scope-incident-target" type="radio" name="quarantineScope" value="incident-target" checked>
+                            <span>incident가 발생한 디렉터리만 격리</span>
+                        </label>
+                        <label class="radio-option">
+                            <input id="scope-all-watch-targets" type="radio" name="quarantineScope" value="all-watch-targets">
+                            <span>모든 감시 중인 디렉터리 격리</span>
+                        </label>
+                    </fieldset>
                     <div class="rules-grid">
                         <label class="slider-control threshold-control">
                             <span>기준 가중치</span>

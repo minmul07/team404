@@ -130,15 +130,19 @@ export async function handleApiRequest({ runtime, request, response }) {
       throw createBadRequest('mode must be normal or demo');
     }
 
-    if (!payload?.targetPath || typeof payload.targetPath !== 'string') {
-      throw createBadRequest('targetPath is required');
+    const targetPaths = normalizeWatchTargetPaths(payload);
+
+    for (const targetPath of targetPaths) {
+      if (!await isExistingDirectory(targetPath)) {
+        throw createBadRequest('targetPath must be an existing directory');
+      }
     }
 
-    if (!await isExistingDirectory(payload.targetPath)) {
-      throw createBadRequest('targetPath must be an existing directory');
+    if (Array.isArray(payload.targetPaths)) {
+      return writeJson(response, 200, await runtime.setTargetPaths(targetPaths));
     }
 
-    return writeJson(response, 200, await runtime.setTargetPath(payload.targetPath));
+    return writeJson(response, 200, await runtime.setTargetPath(targetPaths[0]));
   }
 
   if (request.method === 'POST' && url.pathname === '/api/watch/toggle') {
@@ -241,11 +245,16 @@ function validateDetectionPolicyPayload(payload) {
 }
 
 function normalizeResponsePolicy(policy = {}) {
+  const quarantineScope = policy?.quarantineScope === 'all-watch-targets'
+    ? 'all-watch-targets'
+    : 'incident-target';
+
   if (policy?.shutdownSystem) {
     return {
       lockDirectoryPermissions: true,
       killSuspectProcesses: true,
-      shutdownSystem: true
+      shutdownSystem: true,
+      quarantineScope
     };
   }
 
@@ -253,14 +262,16 @@ function normalizeResponsePolicy(policy = {}) {
     return {
       lockDirectoryPermissions: true,
       killSuspectProcesses: true,
-      shutdownSystem: false
+      shutdownSystem: false,
+      quarantineScope
     };
   }
 
   return {
     lockDirectoryPermissions: true,
     killSuspectProcesses: false,
-    shutdownSystem: false
+    shutdownSystem: false,
+    quarantineScope
   };
 }
 
@@ -276,6 +287,46 @@ function validateResponsePolicyPayload(payload) {
       throw createBadRequest(`${field} must be boolean`);
     }
   }
+
+  if (
+    payload.quarantineScope !== undefined &&
+    payload.quarantineScope !== 'incident-target' &&
+    payload.quarantineScope !== 'all-watch-targets'
+  ) {
+    throw createBadRequest('quarantineScope must be incident-target or all-watch-targets');
+  }
+}
+
+function normalizeWatchTargetPaths(payload) {
+  if (Array.isArray(payload?.targetPaths)) {
+    if (payload.targetPaths.length === 0) {
+      throw createBadRequest('targetPaths must include at least one directory');
+    }
+
+    const seen = new Set();
+    const targetPaths = [];
+    for (const targetPath of payload.targetPaths) {
+      if (typeof targetPath !== 'string' || targetPath.trim() === '') {
+        throw createBadRequest('targetPaths entries must be non-empty strings');
+      }
+
+      const resolvedPath = path.resolve(targetPath);
+      if (seen.has(resolvedPath)) {
+        throw createBadRequest('targetPaths must not include duplicate directories');
+      }
+
+      seen.add(resolvedPath);
+      targetPaths.push(targetPath);
+    }
+
+    return targetPaths;
+  }
+
+  if (!payload?.targetPath || typeof payload.targetPath !== 'string') {
+    throw createBadRequest('targetPath is required');
+  }
+
+  return [payload.targetPath];
 }
 
 function normalizeDemoSettings(settings = {}) {

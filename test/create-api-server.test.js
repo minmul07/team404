@@ -131,6 +131,37 @@ test('handleApiRequest switches watch target through POST /api/watch/target', as
   }
 });
 
+test('handleApiRequest switches multiple watch targets through POST /api/watch/target', async () => {
+  const runtime = createRuntimeDouble();
+  const response = createResponseDouble();
+  const firstPath = await fs.mkdtemp(path.join(os.tmpdir(), 'team404-api-target-a-'));
+  const secondPath = await fs.mkdtemp(path.join(os.tmpdir(), 'team404-api-target-b-'));
+
+  try {
+    await handleApiRequest({
+      runtime,
+      request: createJsonRequest({
+        method: 'POST',
+        url: API_ROUTES.WATCH_TARGET,
+        body: { mode: 'normal', targetPaths: [firstPath, secondPath] }
+      }),
+      response
+    });
+
+    assert.equal(runtime.setTargetPathsCalls.length, 1);
+    assert.deepEqual(runtime.setTargetPathsCalls[0], [firstPath, secondPath]);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.activeMode, 'target');
+    assert.deepEqual(
+      response.payload.targets.map((target) => target.rootPath),
+      [`/resolved/${firstPath}`, `/resolved/${secondPath}`]
+    );
+  } finally {
+    await fs.rm(firstPath, { recursive: true, force: true });
+    await fs.rm(secondPath, { recursive: true, force: true });
+  }
+});
+
 test('handleApiRequest rejects POST /api/watch/target without a targetPath', async () => {
   const runtime = createRuntimeDouble();
   const response = createResponseDouble();
@@ -170,7 +201,8 @@ test('handleApiRequest returns response policy settings', async () => {
   assert.deepEqual(response.payload, {
     lockDirectoryPermissions: true,
     killSuspectProcesses: false,
-    shutdownSystem: false
+    shutdownSystem: false,
+    quarantineScope: 'incident-target'
   });
 });
 
@@ -197,7 +229,8 @@ test('handleApiRequest updates response policy settings', async () => {
   assert.deepEqual(response.payload, {
     lockDirectoryPermissions: true,
     killSuspectProcesses: true,
-    shutdownSystem: false
+    shutdownSystem: false,
+    quarantineScope: 'incident-target'
   });
 });
 
@@ -223,8 +256,63 @@ test('handleApiRequest normalizes shutdown response policy to cumulative stages'
   assert.deepEqual(response.payload, {
     lockDirectoryPermissions: true,
     killSuspectProcesses: true,
-    shutdownSystem: true
+    shutdownSystem: true,
+    quarantineScope: 'incident-target'
   });
+});
+
+test('handleApiRequest updates response policy quarantine scope', async () => {
+  const runtime = createRuntimeDouble();
+  const response = createResponseDouble();
+
+  await handleApiRequest({
+    runtime,
+    request: createJsonRequest({
+      method: 'PUT',
+      url: API_ROUTES.RESPONSE_POLICY,
+      body: {
+        lockDirectoryPermissions: true,
+        killSuspectProcesses: false,
+        shutdownSystem: false,
+        quarantineScope: 'all-watch-targets'
+      }
+    }),
+    response
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.payload, {
+    lockDirectoryPermissions: true,
+    killSuspectProcesses: false,
+    shutdownSystem: false,
+    quarantineScope: 'all-watch-targets'
+  });
+});
+
+test('handleApiRequest rejects duplicate watch target paths', async () => {
+  const runtime = createRuntimeDouble();
+  const response = createResponseDouble();
+  const targetPath = await fs.mkdtemp(path.join(os.tmpdir(), 'team404-api-target-dup-'));
+
+  try {
+    await handleApiRequest({
+      runtime,
+      request: createJsonRequest({
+        method: 'POST',
+        url: API_ROUTES.WATCH_TARGET,
+        body: { mode: 'normal', targetPaths: [targetPath, targetPath] }
+      }),
+      response
+    }).catch((error) => {
+      response.writeHead(error.statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify({ message: error.message }));
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.payload.message, 'targetPaths must not include duplicate directories');
+  } finally {
+    await fs.rm(targetPath, { recursive: true, force: true });
+  }
 });
 
 test('handleApiRequest rejects invalid response policy settings', async () => {
@@ -461,6 +549,7 @@ function createRuntimeDouble() {
     stopDemoCalls: 0,
     resetDemoCalls: 0,
     setTargetPathCalls: [],
+    setTargetPathsCalls: [],
     updateResponsePolicyCalls: [],
     updateDetectionPolicyCalls: [],
     resetDetectionPolicyCalls: 0,
@@ -471,7 +560,8 @@ function createRuntimeDouble() {
     responsePolicy: {
       lockDirectoryPermissions: true,
       killSuspectProcesses: false,
-      shutdownSystem: false
+      shutdownSystem: false,
+      quarantineScope: 'incident-target'
     },
     detectionPolicy: {
       thresholdWeight: 10,
@@ -548,19 +638,22 @@ function createRuntimeDouble() {
         this.responsePolicy = {
           lockDirectoryPermissions: true,
           killSuspectProcesses: true,
-          shutdownSystem: true
+          shutdownSystem: true,
+          quarantineScope: policy.quarantineScope ?? 'incident-target'
         };
       } else if (policy.killSuspectProcesses) {
         this.responsePolicy = {
           lockDirectoryPermissions: true,
           killSuspectProcesses: true,
-          shutdownSystem: false
+          shutdownSystem: false,
+          quarantineScope: policy.quarantineScope ?? 'incident-target'
         };
       } else {
         this.responsePolicy = {
           lockDirectoryPermissions: true,
           killSuspectProcesses: false,
-          shutdownSystem: false
+          shutdownSystem: false,
+          quarantineScope: policy.quarantineScope ?? 'incident-target'
         };
       }
       return this.getResponsePolicy();
@@ -654,6 +747,19 @@ function createRuntimeDouble() {
         activeTarget: {
           rootPath: `/resolved/${targetPath}`
         }
+      };
+    },
+    async setTargetPaths(targetPaths) {
+      this.setTargetPathsCalls.push(targetPaths);
+      return {
+        activeMode: 'target',
+        activeTarget: {
+          rootPath: `/resolved/${targetPaths[0]}`
+        },
+        targets: targetPaths.map((targetPath, index) => ({
+          id: `manual-${index + 1}`,
+          rootPath: `/resolved/${targetPath}`
+        }))
       };
     }
   };

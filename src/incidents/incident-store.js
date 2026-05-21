@@ -161,34 +161,40 @@ export class IncidentStore {
     incident.updatedAt = payload.updatedAt ?? new Date().toISOString();
   }
 
-  handleQuarantineStarted({ incidentId, rootPath, status }) {
+  handleQuarantineStarted({ incidentId, rootPath, rootPaths, status }) {
     const existing = this.quarantineJobs.find(j => j.incidentId === incidentId);
     if (existing) {
       existing.status = status;
       existing.rootPath = rootPath ?? existing.rootPath;
+      existing.rootPaths = rootPaths ?? existing.rootPaths;
     } else {
-      this.quarantineJobs.unshift({ incidentId, rootPath, status });
+      this.quarantineJobs.unshift({ incidentId, rootPath, rootPaths, status });
     }
   }
 
-  handleQuarantineCompleted({ incidentId, rootPath, status, quarantinedAt, entryCount }) {
+  handleQuarantineCompleted({ incidentId, rootPath, rootPaths, status, quarantinedAt, entryCount, permissionEntryCount }) {
     const existing = this.quarantineJobs.find(j => j.incidentId === incidentId);
     if (existing) {
       existing.status = status;
+      existing.rootPath = rootPath ?? existing.rootPath;
+      existing.rootPaths = rootPaths ?? existing.rootPaths;
       existing.quarantinedAt = quarantinedAt;
       existing.entryCount = entryCount;
+      existing.permissionEntryCount = permissionEntryCount;
     } else {
-      this.quarantineJobs.unshift({ incidentId, rootPath, status, quarantinedAt, entryCount });
+      this.quarantineJobs.unshift({ incidentId, rootPath, rootPaths, status, quarantinedAt, entryCount, permissionEntryCount });
     }
   }
 
-  handleQuarantineFailed({ incidentId, rootPath, status, reason }) {
+  handleQuarantineFailed({ incidentId, rootPath, rootPaths, status, reason }) {
     const existing = this.quarantineJobs.find(j => j.incidentId === incidentId);
     if (existing) {
       existing.status = status;
+      existing.rootPath = rootPath ?? existing.rootPath;
+      existing.rootPaths = rootPaths ?? existing.rootPaths;
       existing.reason = reason;
     } else {
-      this.quarantineJobs.unshift({ incidentId, rootPath, status, reason });
+      this.quarantineJobs.unshift({ incidentId, rootPath, rootPaths, status, reason });
     }
   }
 

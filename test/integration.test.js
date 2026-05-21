@@ -133,3 +133,75 @@ test('integration: detection-to-quarantine-to-restore flow', async () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test('integration: all-watch-targets quarantine and restore covers each directory', async () => {
+  await setupFakeMonitorScript();
+
+  const firstDir = await fs.mkdtemp(path.join('/tmp', 'team404-integration-a-'));
+  const secondDir = await fs.mkdtemp(path.join('/tmp', 'team404-integration-b-'));
+  await fs.writeFile(path.join(firstDir, 'first.txt'), 'first');
+  await fs.mkdir(path.join(secondDir, 'subdir'), { recursive: true });
+  await fs.writeFile(path.join(secondDir, 'subdir', 'second.txt'), 'second');
+
+  const config = createTestConfig(firstDir);
+  config.monitor.targets = [
+    {
+      id: 'integration-first-target',
+      rootPath: firstDir,
+      enabled: true,
+      autoQuarantineEnabled: true,
+      demoAllowed: false
+    },
+    {
+      id: 'integration-second-target',
+      rootPath: secondDir,
+      enabled: true,
+      autoQuarantineEnabled: true,
+      demoAllowed: false
+    }
+  ];
+
+  const runtime = createRuntime(config, {
+    responsePolicy: {
+      lockDirectoryPermissions: true,
+      killSuspectProcesses: false,
+      shutdownSystem: false,
+      quarantineScope: 'all-watch-targets'
+    }
+  });
+
+  try {
+    await runtime.start();
+
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+
+    for (let i = 0; i < 11; i++) {
+      runtime.eventBus.emit(EVENT_NAMES.FS_EVENT, {
+        type: 'modify',
+        path: path.join(firstDir, `file${i}.unknownext`),
+        observedAt: nowIso,
+        observedTs: now,
+        monitorTargetId: 'integration-first-target',
+        monitorRootPath: firstDir
+      });
+    }
+
+    const completed = await waitForEvent(runtime.eventBus, EVENT_NAMES.QUARANTINE_COMPLETED, 5000);
+    assert.deepEqual(completed.rootPaths, [firstDir, secondDir]);
+    assert.equal(completed.entryCount, 2);
+    assert.equal(completed.permissionEntryCount, 5);
+
+    const incident = runtime.incidentStore.getIncidents().find(i => i.id === completed.incidentId);
+    assert.ok(incident, 'Incident should exist in store');
+
+    const restoreResult = await runtime.restoreIncident(incident.id);
+    assert.deepEqual(restoreResult.rootPaths, [firstDir, secondDir]);
+    assert.equal(restoreResult.entryCount, 2);
+    assert.equal(restoreResult.permissionEntryCount, 5);
+  } finally {
+    await runtime.stop();
+    await fs.rm(firstDir, { recursive: true, force: true });
+    await fs.rm(secondDir, { recursive: true, force: true });
+  }
+});

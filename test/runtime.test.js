@@ -65,13 +65,15 @@ test('createRuntime defaults response policy to directory permission lock only',
   assert.deepEqual(runtime.getResponsePolicy(), {
     lockDirectoryPermissions: true,
     killSuspectProcesses: false,
-    shutdownSystem: false
+    shutdownSystem: false,
+    quarantineScope: 'incident-target'
   });
 
   assert.deepEqual(runtime.getSnapshot().responsePolicy, {
     lockDirectoryPermissions: true,
     killSuspectProcesses: false,
-    shutdownSystem: false
+    shutdownSystem: false,
+    quarantineScope: 'incident-target'
   });
 });
 
@@ -87,7 +89,8 @@ test('createRuntime updates response policy', () => {
   assert.deepEqual(policy, {
     lockDirectoryPermissions: true,
     killSuspectProcesses: true,
-    shutdownSystem: false
+    shutdownSystem: false,
+    quarantineScope: 'incident-target'
   });
   assert.deepEqual(runtime.getHealth().responsePolicy, policy);
 });
@@ -104,7 +107,26 @@ test('createRuntime treats shutdown response policy as the highest cumulative st
   assert.deepEqual(policy, {
     lockDirectoryPermissions: true,
     killSuspectProcesses: true,
-    shutdownSystem: true
+    shutdownSystem: true,
+    quarantineScope: 'incident-target'
+  });
+});
+
+test('createRuntime updates response policy quarantine scope', () => {
+  const runtime = createRuntime(createConfig());
+
+  const policy = runtime.updateResponsePolicy({
+    lockDirectoryPermissions: true,
+    killSuspectProcesses: false,
+    shutdownSystem: false,
+    quarantineScope: 'all-watch-targets'
+  });
+
+  assert.deepEqual(policy, {
+    lockDirectoryPermissions: true,
+    killSuspectProcesses: false,
+    shutdownSystem: false,
+    quarantineScope: 'all-watch-targets'
   });
 });
 
@@ -227,6 +249,89 @@ test('runtime snapshot includes recursive file count for active watch target', a
     await runtime.stop();
   } finally {
     await fs.rm(rootPath, { recursive: true, force: true });
+  }
+});
+
+test('runtime snapshot sums recursive file counts across watch targets', async () => {
+  const firstRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'team404-watch-a-'));
+  const secondRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'team404-watch-b-'));
+
+  try {
+    await fs.writeFile(path.join(firstRoot, 'a.txt'), 'a');
+    await fs.mkdir(path.join(firstRoot, 'nested'));
+    await fs.writeFile(path.join(firstRoot, 'nested', 'b.txt'), 'b');
+    await fs.writeFile(path.join(secondRoot, 'c.txt'), 'c');
+
+    const config = createConfig();
+    config.monitor.targets = [
+      { id: 'first', rootPath: firstRoot, enabled: true, autoQuarantineEnabled: false, demoAllowed: false },
+      { id: 'second', rootPath: secondRoot, enabled: true, autoQuarantineEnabled: false, demoAllowed: false }
+    ];
+
+    const runtime = createRuntime(config);
+    const snapshot = runtime.getSnapshot();
+
+    assert.equal(snapshot.watchedFileCount, 3);
+    assert.deepEqual(
+      snapshot.targets.map((target) => target.rootPath),
+      [firstRoot, secondRoot]
+    );
+
+    await runtime.stop();
+  } finally {
+    await fs.rm(firstRoot, { recursive: true, force: true });
+    await fs.rm(secondRoot, { recursive: true, force: true });
+  }
+});
+
+test('runtime setTargetPaths persists monitor targets to config file', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'team404-runtime-watch-config-'));
+  const firstRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'team404-watch-a-'));
+  const secondRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'team404-watch-b-'));
+  const configPath = path.join(tempDir, 'app-config.json');
+
+  try {
+    await fs.writeFile(configPath, JSON.stringify({
+      monitor: {
+        scriptPath: '../config/monitor.sh',
+        restartDelayMs: 2000,
+        movePairWindowMs: 750,
+        targets: [
+          {
+            id: 'old',
+            rootPath: '/tmp/old',
+            enabled: true,
+            autoQuarantineEnabled: false,
+            demoAllowed: false
+          }
+        ]
+      }
+    }, null, 2));
+
+    const config = createConfig();
+    config.meta.configPath = configPath;
+    const runtime = createRuntime(config);
+
+    const snapshot = await runtime.setTargetPaths([firstRoot, secondRoot]);
+
+    assert.deepEqual(
+      snapshot.targets.map((target) => target.rootPath),
+      [firstRoot, secondRoot]
+    );
+
+    const persisted = JSON.parse(await fs.readFile(configPath, 'utf8'));
+    assert.deepEqual(
+      persisted.monitor.targets.map((target) => target.rootPath),
+      [firstRoot, secondRoot]
+    );
+    assert.equal(persisted.monitor.targets[0].id, 'manual-1');
+    assert.equal(persisted.monitor.scriptPath, '../config/monitor.sh');
+
+    await runtime.stop();
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    await fs.rm(firstRoot, { recursive: true, force: true });
+    await fs.rm(secondRoot, { recursive: true, force: true });
   }
 });
 

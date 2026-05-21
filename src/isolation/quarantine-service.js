@@ -24,15 +24,17 @@ const SAFE_KILL_PATH_SEGMENT = 'demo-target';
  * - 상태 흐름: DETECTED → QUARANTINING → QUARANTINED → RESTORED / FAILED
  */
 export class QuarantineService {
-  constructor({ eventBus, getResponsePolicy }) {
+  constructor({ eventBus, getResponsePolicy, getWatchTargets }) {
     this.eventBus = eventBus;
     this.getResponsePolicy = getResponsePolicy ?? (() => ({
       lockDirectoryPermissions: true,
       killSuspectProcesses: false,
-      shutdownSystem: false
+      shutdownSystem: false,
+      quarantineScope: 'incident-target'
     }));
+    this.getWatchTargets = getWatchTargets ?? (() => []);
 
-    // incidentId -> { rootPath, entries: [{ filePath, originalMode }] }
+    // incidentId -> { rootPath, rootPaths, records: [{ rootPath, entries }] }
     this.quarantineRecords = new Map();
 
     // 중복 격리 방지: 현재 처리 중인 incidentId 추적
@@ -67,54 +69,77 @@ export class QuarantineService {
 
     this.inProgressIds.add(incident.id);
 
-    // 상태: QUARANTINING
+    const responsePolicy = this.getResponsePolicy();
+    const rootPaths = resolveQuarantineRootPaths({
+      incident,
+      responsePolicy,
+      watchTargets: this.getWatchTargets()
+    });
+    const primaryRootPath = rootPaths[0];
+
+    if (rootPaths.length === 0) {
+      this._emitFailed(incident, '격리할 감시 디렉터리를 찾을 수 없습니다.');
+      return;
+    }
+
     this._emitIncidentUpdated(incident.id, INCIDENT_STATUSES.QUARANTINING);
     this.eventBus.emit(EVENT_NAMES.QUARANTINE_STARTED, {
       incidentId: incident.id,
-      rootPath: incident.monitorRootPath,
+      rootPath: primaryRootPath,
+      rootPaths,
       status: INCIDENT_STATUSES.QUARANTINING
     });
     await appendLog({
       eventType: 'quarantine_started',
       incidentId: incident.id,
-      rootPath: incident.monitorRootPath
+      rootPath: primaryRootPath,
+      rootPaths
     });
 
     try {
-      const responsePolicy = this.getResponsePolicy();
-      const entries = responsePolicy.lockDirectoryPermissions
-        ? await collectPermissions(incident.monitorRootPath)
-        : [];
+      const records = [];
+
+      for (const rootPath of rootPaths) {
+        const entries = responsePolicy.lockDirectoryPermissions
+          ? await collectPermissions(rootPath)
+          : [];
+        records.push({ rootPath, entries });
+      }
 
       // 원래 권한 저장
       this.quarantineRecords.set(incident.id, {
-        rootPath: incident.monitorRootPath,
-        entries
+        rootPath: primaryRootPath,
+        rootPaths,
+        records
       });
 
       // 해당 경로를 점유 중인 프로세스 종료 (demo-target 범위만)
       if (responsePolicy.killSuspectProcesses) {
-        const killedPids = await killProcessesSafe(incident.monitorRootPath);
-        await appendLog({
-          eventType: 'quarantine_progress',
-          incidentId: incident.id,
-          rootPath: incident.monitorRootPath,
-          detail: `processes_killed`,
-          pids: killedPids
-        });
+        for (const rootPath of rootPaths) {
+          const killedPids = await killProcessesSafe(rootPath);
+          await appendLog({
+            eventType: 'quarantine_progress',
+            incidentId: incident.id,
+            rootPath,
+            detail: `processes_killed`,
+            pids: killedPids
+          });
+        }
       }
 
       // quarantine.sh 호출 – per-file progress stdout 파싱
       if (responsePolicy.lockDirectoryPermissions) {
-        const progressItems = await lockPermissions(incident.monitorRootPath);
-        for (const item of progressItems) {
-          await appendLog({
-            eventType: 'quarantine_progress',
-            incidentId: incident.id,
-            rootPath: incident.monitorRootPath,
-            filePath: item.filePath,
-            result: item.result
-          });
+        for (const rootPath of rootPaths) {
+          const progressItems = await lockPermissions(rootPath);
+          for (const item of progressItems) {
+            await appendLog({
+              eventType: 'quarantine_progress',
+              incidentId: incident.id,
+              rootPath,
+              filePath: item.filePath,
+              result: item.result
+            });
+          }
         }
       }
 
@@ -123,7 +148,8 @@ export class QuarantineService {
         await appendLog({
           eventType: 'quarantine_progress',
           incidentId: incident.id,
-          rootPath: incident.monitorRootPath,
+          rootPath: primaryRootPath,
+          rootPaths,
           detail: 'system_shutdown',
           result: shutdownResult.status,
           reason: shutdownResult.reason
@@ -131,15 +157,16 @@ export class QuarantineService {
       }
 
       this.inProgressIds.delete(incident.id);
-      const fileEntryCount = countFileEntries(entries);
+      const summary = summarizeRecords(records);
 
       const job = {
         incidentId: incident.id,
-        rootPath: incident.monitorRootPath,
-        status: 'quarantined',
+        rootPath: primaryRootPath,
+        rootPaths,
+        status: INCIDENT_STATUSES.QUARANTINED,
         quarantinedAt: new Date().toISOString(),
-        entryCount: fileEntryCount,
-        permissionEntryCount: entries.length
+        entryCount: summary.entryCount,
+        permissionEntryCount: summary.permissionEntryCount
       };
 
       // 상태: QUARANTINED
@@ -148,20 +175,22 @@ export class QuarantineService {
       await appendLog({
         eventType: 'quarantine_completed',
         incidentId: incident.id,
-        rootPath: incident.monitorRootPath,
-        entryCount: fileEntryCount,
-        permissionEntryCount: entries.length
+        rootPath: primaryRootPath,
+        rootPaths,
+        entryCount: summary.entryCount,
+        permissionEntryCount: summary.permissionEntryCount
       });
 
       return job;
 
     } catch (error) {
       this.inProgressIds.delete(incident.id);
-      this._emitFailed(incident, error.message);
+      this._emitFailed(incident, error.message, rootPaths);
       await appendLog({
         eventType: 'quarantine_failed',
         incidentId: incident.id,
-        rootPath: incident.monitorRootPath ?? null,
+        rootPath: primaryRootPath ?? incident.monitorRootPath ?? null,
+        rootPaths,
         reason: error.message
       });
     }
@@ -180,40 +209,49 @@ export class QuarantineService {
       throw error;
     }
 
+    const records = normalizeRecordEntries(record);
+    const rootPaths = records.map((item) => item.rootPath);
+    const primaryRootPath = rootPaths[0] ?? record.rootPath;
+
     this.eventBus.emit(EVENT_NAMES.RESTORE_REQUESTED, {
       incidentId,
-      rootPath: record.rootPath
+      rootPath: primaryRootPath,
+      rootPaths
     });
     await appendLog({
       eventType: 'restore_requested',
       incidentId,
-      rootPath: record.rootPath
+      rootPath: primaryRootPath,
+      rootPaths
     });
 
     try {
       // restore.sh 를 entry 단위로 호출 – per-file 결과 로깅
-      const progressItems = await restorePermissions(record.entries);
-      for (const item of progressItems) {
-        await appendLog({
-          eventType: 'quarantine_progress',
-          incidentId,
-          rootPath: record.rootPath,
-          filePath: item.filePath,
-          result: item.result
-        });
+      for (const rootRecord of records) {
+        const progressItems = await restorePermissions(rootRecord.entries);
+        for (const item of progressItems) {
+          await appendLog({
+            eventType: 'quarantine_progress',
+            incidentId,
+            rootPath: rootRecord.rootPath,
+            filePath: item.filePath,
+            result: item.result
+          });
+        }
       }
 
-      const fileEntryCount = countFileEntries(record.entries);
+      const summary = summarizeRecords(records);
 
       this.quarantineRecords.delete(incidentId);
 
       const result = {
         incidentId,
-        rootPath: record.rootPath,
-        status: 'restored',
+        rootPath: primaryRootPath,
+        rootPaths,
+        status: INCIDENT_STATUSES.RESTORED,
         restoredAt: new Date().toISOString(),
-        entryCount: fileEntryCount,
-        permissionEntryCount: record.entries.length,
+        entryCount: summary.entryCount,
+        permissionEntryCount: summary.permissionEntryCount,
         decryptedFileCount: 0
       };
 
@@ -223,9 +261,10 @@ export class QuarantineService {
       await appendLog({
         eventType: 'restore_completed',
         incidentId,
-        rootPath: record.rootPath,
-        entryCount: fileEntryCount,
-        permissionEntryCount: record.entries.length
+        rootPath: primaryRootPath,
+        rootPaths,
+        entryCount: summary.entryCount,
+        permissionEntryCount: summary.permissionEntryCount
       });
 
       return result;
@@ -233,13 +272,15 @@ export class QuarantineService {
     } catch (error) {
       this.eventBus.emit(EVENT_NAMES.RESTORE_FAILED, {
         incidentId,
-        rootPath: record.rootPath,
+        rootPath: primaryRootPath,
+        rootPaths,
         reason: error.message
       });
       await appendLog({
         eventType: 'restore_failed',
         incidentId,
-        rootPath: record.rootPath,
+        rootPath: primaryRootPath,
+        rootPaths,
         reason: error.message
       });
       throw error;
@@ -252,11 +293,15 @@ export class QuarantineService {
   getQuarantineJobs() {
     const jobs = [];
     for (const [incidentId, record] of this.quarantineRecords.entries()) {
+      const records = normalizeRecordEntries(record);
+      const rootPaths = records.map((item) => item.rootPath);
+      const summary = summarizeRecords(records);
       jobs.push({
         incidentId,
-        rootPath: record.rootPath,
-        entryCount: countFileEntries(record.entries),
-        permissionEntryCount: record.entries.length
+        rootPath: rootPaths[0] ?? record.rootPath,
+        rootPaths,
+        entryCount: summary.entryCount,
+        permissionEntryCount: summary.permissionEntryCount
       });
     }
     return jobs;
@@ -291,11 +336,13 @@ export class QuarantineService {
     });
   }
 
-  _emitFailed(incident, reason) {
+  _emitFailed(incident, reason, rootPaths = null) {
+    const failedRootPaths = rootPaths ?? (incident.monitorRootPath ? [incident.monitorRootPath] : []);
     this._emitIncidentUpdated(incident.id, INCIDENT_STATUSES.FAILED);
     this.eventBus.emit(EVENT_NAMES.QUARANTINE_FAILED, {
       incidentId: incident.id,
-      rootPath: incident.monitorRootPath ?? null,
+      rootPath: failedRootPaths[0] ?? incident.monitorRootPath ?? null,
+      rootPaths: failedRootPaths,
       status: INCIDENT_STATUSES.FAILED,
       reason
     });
@@ -333,6 +380,63 @@ async function collectPermissions(rootPath) {
 
 function countFileEntries(entries) {
   return entries.filter((entry) => entry.entryType === 'file').length;
+}
+
+function resolveQuarantineRootPaths({ incident, responsePolicy, watchTargets }) {
+  if (responsePolicy.quarantineScope !== 'all-watch-targets') {
+    return [incident.monitorRootPath].filter(Boolean);
+  }
+
+  return uniqueRootPaths([
+    incident.monitorRootPath,
+    ...watchTargets.map((target) => target?.rootPath)
+  ]);
+}
+
+function uniqueRootPaths(rootPaths) {
+  const seen = new Set();
+  const unique = [];
+
+  for (const rootPath of rootPaths) {
+    if (!rootPath) {
+      continue;
+    }
+
+    const resolvedPath = path.resolve(rootPath);
+    if (seen.has(resolvedPath)) {
+      continue;
+    }
+
+    seen.add(resolvedPath);
+    unique.push(resolvedPath);
+  }
+
+  return unique;
+}
+
+function normalizeRecordEntries(record) {
+  if (Array.isArray(record.records)) {
+    return record.records;
+  }
+
+  return [
+    {
+      rootPath: record.rootPath,
+      entries: record.entries ?? []
+    }
+  ];
+}
+
+function summarizeRecords(records) {
+  return records.reduce((summary, record) => {
+    const entries = record.entries ?? [];
+    summary.entryCount += countFileEntries(entries);
+    summary.permissionEntryCount += entries.length;
+    return summary;
+  }, {
+    entryCount: 0,
+    permissionEntryCount: 0
+  });
 }
 
 /**

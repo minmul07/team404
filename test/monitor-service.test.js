@@ -78,6 +78,23 @@ test('MonitorService switches to an explicit target path when provided at creati
   assert.equal(health.targets[0].rootPath, health.activeTarget.rootPath);
 });
 
+test('MonitorService switches to explicit target paths when provided at creation time', () => {
+  const service = new MonitorService({
+    config: createConfig(),
+    eventBus: createEventBus(),
+    watchOptions: { targetPaths: ['./tmp/manual-a', './tmp/manual-b'] }
+  });
+
+  const health = service.getHealth();
+  assert.equal(health.activeMode, 'target');
+  assert.ok(health.activeTarget.rootPath.endsWith('/tmp/manual-a'));
+  assert.deepEqual(
+    health.targets.map((target) => target.id),
+    ['manual-1', 'manual-2']
+  );
+  assert.ok(health.targets[1].rootPath.endsWith('/tmp/manual-b'));
+});
+
 test('MonitorService can toggle demo mode on and off after creation', async () => {
   const service = new MonitorService({
     config: createConfig(),

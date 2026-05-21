@@ -234,6 +234,23 @@ function resolveWatchContext(configuredTargets, watchOptions, projectRoot) {
     };
   }
 
+  if (Array.isArray(watchOptions.targetPaths) && watchOptions.targetPaths.length > 0) {
+    const baseTarget = defaultTarget ?? createFallbackTarget();
+    const targets = watchOptions.targetPaths.map((targetPath, index) => ({
+      ...baseTarget,
+      id: `manual-${index + 1}`,
+      rootPath: path.resolve(targetPath),
+      mode: 'target',
+      demoAllowed: false
+    }));
+
+    return {
+      activeMode: 'target',
+      activeTarget: targets[0],
+      targets
+    };
+  }
+
   if (watchOptions.targetPath) {
     const baseTarget = defaultTarget ?? createFallbackTarget();
     const activeTarget = {
