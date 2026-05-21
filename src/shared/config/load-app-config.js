@@ -32,6 +32,7 @@ export async function loadAppConfig(options = {}) {
     },
     monitor: {
       scriptPath: resolveFromConfig(configDir, parsed.monitor?.scriptPath ?? '../config/monitor.sh'),
+      backendMode: normalizeMonitorBackendMode(parsed.monitor?.backendMode),
       restartDelayMs: parsed.monitor?.restartDelayMs ?? 2000,
       movePairWindowMs: parsed.monitor?.movePairWindowMs ?? 750,
       targets: monitorTargets
@@ -71,6 +72,18 @@ function normalizeMonitorTargets(rawTargets, configDir) {
     autoQuarantineEnabled: target?.autoQuarantineEnabled ?? false,
     demoAllowed: target?.demoAllowed ?? false
   }));
+}
+
+function normalizeMonitorBackendMode(value) {
+  if (value === undefined || value === null || value === '') {
+    return 'auto';
+  }
+
+  if (value === 'auto' || value === 'auditd' || value === 'inotify') {
+    return value;
+  }
+
+  throw new Error('monitor.backendMode must be auto, auditd, or inotify');
 }
 
 function normalizeRules(rawRules) {

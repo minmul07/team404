@@ -4,7 +4,6 @@ import { EVENT_NAMES, FILE_EVENT_TYPES } from '../shared/contracts/event-names.j
 import { getEventMultiplier, getExtensionWeight, loadExtensionWeights } from './extension-weight-loader.js';
 
 const BURST_RULE_ID = 'extension-weight-burst';
-const BUCKET_MS = 1000;
 const DETECTABLE_EVENT_TYPES = new Set([
   FILE_EVENT_TYPES.CREATE,
   FILE_EVENT_TYPES.MODIFY,
@@ -15,7 +14,7 @@ export class RuleEngine {
   constructor({ eventBus, config }) {
     this.eventBus = eventBus;
     this.config = config;
-    this.bucketsByTargetSecond = new Map();
+    this.bucketsByTarget = new Map();
     this.lastMatchAt = null;
     this.activeRuleSettings = null;
     this.decayTimer = null;
@@ -34,7 +33,7 @@ export class RuleEngine {
   getState() {
     const thresholdWeight = this.getThresholdWeight();
     return {
-      activeRuleWindows: this.bucketsByTargetSecond.size,
+      activeRuleWindows: this.bucketsByTarget.size,
       detectionPolicy: this.activeRuleSettings?.detectionPolicy ?? null,
       configuredRules: [
         {
@@ -42,7 +41,6 @@ export class RuleEngine {
           eventTypes: [...DETECTABLE_EVENT_TYPES],
           thresholdWeight,
           weightDecay: this.getWeightDecay(),
-          bucketMs: BUCKET_MS,
           severity: 'critical',
           autoQuarantine: true
         }
@@ -59,18 +57,31 @@ export class RuleEngine {
     this.restartDecayTimer();
   }
 
+  resetWeights() {
+    this.bucketsByTarget.clear();
+    this.eventBus.emit(EVENT_NAMES.RULE_WEIGHT_UPDATED, {
+      ruleId: BURST_RULE_ID,
+      ruleName: 'Extension Weight Burst',
+      eventType: 'reset',
+      eventWeight: 0,
+      currentWeight: 0,
+      thresholdWeight: this.getThresholdWeight(),
+      eventCount: 0,
+      observedAt: new Date().toISOString(),
+      observedTs: Date.now()
+    });
+  }
+
   handleFsEvent(event) {
     if (!DETECTABLE_EVENT_TYPES.has(event.type)) {
       return;
     }
 
     const observedTs = Number.isFinite(event.observedTs) ? event.observedTs : Date.now();
-    const bucketSecond = Math.floor(observedTs / BUCKET_MS);
     const targetKey = event.monitorTargetId ?? event.monitorRootPath ?? 'unknown';
-    const bucketKey = `${targetKey}:${bucketSecond}`;
     const extension = parseExtension(event.path);
     const weight = getExtensionWeight(extension) * getEventMultiplier(event.type);
-    const bucket = this.bucketsByTargetSecond.get(bucketKey) ?? createBucket(targetKey, bucketSecond);
+    const bucket = this.bucketsByTarget.get(targetKey) ?? createBucket(targetKey);
     const thresholdWeight = this.getThresholdWeight();
 
     bucket.totalWeight += weight;
@@ -78,8 +89,7 @@ export class RuleEngine {
     bucket.extensions.push(extension);
     bucket.lastEvent = event;
     bucket.lastEventWeight = weight;
-    this.bucketsByTargetSecond.set(bucketKey, bucket);
-    this.cleanupOldBuckets(targetKey, bucketSecond);
+    this.bucketsByTarget.set(targetKey, bucket);
 
     this.eventBus.emit(EVENT_NAMES.RULE_WEIGHT_UPDATED, {
       ruleId: BURST_RULE_ID,
@@ -92,18 +102,17 @@ export class RuleEngine {
       currentWeight: bucket.totalWeight,
       thresholdWeight,
       eventCount: bucket.events.length,
-      bucketSecond,
-      bucketMs: BUCKET_MS,
       observedAt: event.observedAt,
       observedTs
     });
 
-    if (bucket.totalWeight <= thresholdWeight) {
+    if (bucket.totalWeight <= thresholdWeight || bucket.matched) {
       return;
     }
 
     const samplePaths = [...new Set(bucket.events.map((item) => item.path))].slice(0, 10);
     const eventTypes = [...new Set(bucket.events.map((item) => item.type))];
+    const suspectProcesses = collectSuspectProcesses(bucket.events);
     const match = {
       id: crypto.randomUUID(),
       ruleId: BURST_RULE_ID,
@@ -111,31 +120,23 @@ export class RuleEngine {
       eventType: event.type,
       severity: 'critical',
       autoQuarantine: true,
-      reason: `extension weights reached ${formatWeight(bucket.totalWeight)}>${formatWeight(thresholdWeight)} in 1s`,
+      reason: `extension weights reached ${formatWeight(bucket.totalWeight)}>${formatWeight(thresholdWeight)}`,
       observedAt: event.observedAt,
       observedTs,
       monitorTargetId: event.monitorTargetId,
       monitorRootPath: event.monitorRootPath,
-      bucketSecond,
-      bucketMs: BUCKET_MS,
       thresholdWeight,
       totalWeight: bucket.totalWeight,
       eventCount: bucket.events.length,
       samplePaths,
       targetPaths: samplePaths,
-      eventTypes
+      eventTypes,
+      suspectProcesses
     };
 
     this.lastMatchAt = event.observedAt;
+    bucket.matched = true;
     this.eventBus.emit(EVENT_NAMES.RULE_MATCH, match);
-  }
-
-  cleanupOldBuckets(targetKey, currentBucketSecond) {
-    for (const [bucketKey, bucket] of this.bucketsByTargetSecond) {
-      if (bucket.targetKey === targetKey && bucket.bucketSecond < currentBucketSecond - 1) {
-        this.bucketsByTargetSecond.delete(bucketKey);
-      }
-    }
   }
 
   getThresholdWeight() {
@@ -176,9 +177,9 @@ export class RuleEngine {
     const observedAt = new Date(now).toISOString();
     const thresholdWeight = this.getThresholdWeight();
 
-    for (const [bucketKey, bucket] of this.bucketsByTargetSecond) {
+    for (const [targetKey, bucket] of this.bucketsByTarget) {
       if (bucket.totalWeight <= 0) {
-        this.bucketsByTargetSecond.delete(bucketKey);
+        this.bucketsByTarget.delete(targetKey);
         continue;
       }
 
@@ -188,6 +189,9 @@ export class RuleEngine {
       }
 
       bucket.totalWeight = nextWeight;
+      if (bucket.totalWeight <= thresholdWeight) {
+        bucket.matched = false;
+      }
       this.eventBus.emit(EVENT_NAMES.RULE_WEIGHT_UPDATED, {
         ruleId: BURST_RULE_ID,
         ruleName: 'Extension Weight Burst',
@@ -199,29 +203,59 @@ export class RuleEngine {
         currentWeight: bucket.totalWeight,
         thresholdWeight,
         eventCount: bucket.events.length,
-        bucketSecond: bucket.bucketSecond,
-        bucketMs: BUCKET_MS,
         decay,
         observedAt,
         observedTs: now
       });
 
       if (bucket.totalWeight <= 0) {
-        this.bucketsByTargetSecond.delete(bucketKey);
+        this.bucketsByTarget.delete(targetKey);
       }
     }
   }
 }
 
-function createBucket(targetKey, bucketSecond) {
+function collectSuspectProcesses(events) {
+  const seen = new Set();
+  const processes = [];
+
+  for (const event of events) {
+    const pid = Number(event.pid);
+    if (!Number.isInteger(pid) || pid <= 1 || seen.has(pid)) {
+      continue;
+    }
+
+    seen.add(pid);
+    processes.push({
+      pid,
+      ppid: normalizeOptionalPid(event.ppid),
+      uid: normalizeOptionalPid(event.uid),
+      auid: normalizeOptionalPid(event.auid),
+      comm: event.comm ?? null,
+      exe: event.exe ?? null,
+      source: event.source ?? null,
+      path: event.path ?? null,
+      observedAt: event.observedAt ?? null
+    });
+  }
+
+  return processes;
+}
+
+function normalizeOptionalPid(value) {
+  const numberValue = Number(value);
+  return Number.isInteger(numberValue) && numberValue >= 0 ? numberValue : null;
+}
+
+function createBucket(targetKey) {
   return {
     targetKey,
-    bucketSecond,
     totalWeight: 0,
     events: [],
     extensions: [],
     lastEvent: null,
-    lastEventWeight: 0
+    lastEventWeight: 0,
+    matched: false
   };
 }
 

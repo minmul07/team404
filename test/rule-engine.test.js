@@ -63,10 +63,60 @@ test('RuleEngine emits weight updates and critical extension weight burst after 
   assert.equal(matches[0].autoQuarantine, true);
   assert.equal(matches[0].eventCount, 6);
   assert.equal(matches[0].totalWeight, 12);
-  assert.equal(matches[0].bucketSecond, 1);
-  assert.equal(matches[0].bucketMs, 1000);
   assert.deepEqual(matches[0].eventTypes, ['modify']);
   assert.equal(matches[0].samplePaths.length, 6);
+
+  ruleEngine.stop();
+});
+
+test('RuleEngine emits one match while a target bucket remains over threshold', () => {
+  const { eventBus, ruleEngine, matches } = createRuleEngine({
+    detectionPolicy: {
+      thresholdWeight: 4,
+      weights: {
+        knownExtension: 0.1,
+        unknownExtension: 1,
+        noExtension: 1,
+        suspiciousExtension: 2
+      },
+      eventMultipliers: {
+        create: 1,
+        modify: 1,
+        rename: 1.5
+      },
+      weightDecay: {
+        intervalMs: 1000,
+        amount: 10
+      },
+      userAllowedExtensions: [],
+      suspiciousExtensions: ['locked']
+    }
+  });
+
+  for (let index = 1; index <= 3; index += 1) {
+    emitFsEvent(eventBus, {
+      id: `first-burst-${index}`,
+      path: `/tmp/watch/first-burst-${index}.locked`
+    });
+  }
+
+  assert.equal(matches.length, 1);
+
+  emitFsEvent(eventBus, { id: 'still-over-1', path: '/tmp/watch/still-over-1.locked' });
+  emitFsEvent(eventBus, { id: 'still-over-2', path: '/tmp/watch/still-over-2.locked' });
+
+  assert.equal(matches.length, 1);
+
+  ruleEngine.applyWeightDecay();
+
+  for (let index = 1; index <= 3; index += 1) {
+    emitFsEvent(eventBus, {
+      id: `second-burst-${index}`,
+      path: `/tmp/watch/second-burst-${index}.locked`
+    });
+  }
+
+  assert.equal(matches.length, 2);
 
   ruleEngine.stop();
 });
@@ -170,7 +220,7 @@ test('RuleEngine counts create modify and rename events but ignores delete event
   ruleEngine.stop();
 });
 
-test('RuleEngine keeps buckets per target and per wall-clock second', () => {
+test('RuleEngine keeps accumulated weights per target until decay', () => {
   const { eventBus, ruleEngine, matches } = createRuleEngine();
 
   for (let index = 1; index <= 10; index += 1) {
@@ -203,10 +253,40 @@ test('RuleEngine keeps buckets per target and per wall-clock second', () => {
     monitorTargetId: 'beta'
   });
 
-  assert.equal(matches.length, 1);
-  assert.equal(matches[0].monitorTargetId, 'beta');
-  assert.equal(matches[0].bucketSecond, 1);
+  assert.equal(matches.length, 2);
+  assert.equal(matches[0].monitorTargetId, 'alpha');
   assert.equal(matches[0].totalWeight, 11);
+  assert.equal(matches[1].monitorTargetId, 'beta');
+  assert.equal(matches[1].totalWeight, 11);
+
+  ruleEngine.stop();
+});
+
+test('RuleEngine resetWeights clears accumulated target weights and emits zero update', () => {
+  const { eventBus, ruleEngine, matches, weightUpdates } = createRuleEngine();
+
+  for (let index = 1; index <= 6; index += 1) {
+    emitFsEvent(eventBus, {
+      id: `before-reset-${index}`,
+      path: `/tmp/watch/before-reset-${index}.locked`
+    });
+  }
+
+  assert.equal(matches.length, 1);
+  assert.equal(weightUpdates.at(-1).currentWeight, 12);
+
+  ruleEngine.resetWeights();
+
+  assert.equal(weightUpdates.at(-1).eventType, 'reset');
+  assert.equal(weightUpdates.at(-1).currentWeight, 0);
+
+  emitFsEvent(eventBus, {
+    id: 'after-reset-1',
+    path: '/tmp/watch/after-reset-1.locked'
+  });
+
+  assert.equal(weightUpdates.at(-1).currentWeight, 2);
+  assert.equal(matches.length, 1);
 
   ruleEngine.stop();
 });

@@ -105,6 +105,44 @@ test('handleApiRequest updates demo settings', async () => {
   assert.deepEqual(response.payload, { fileCount: 25 });
 });
 
+
+test('handleApiRequest updates monitor backend settings', async () => {
+  const runtime = createRuntimeDouble();
+  const response = createResponseDouble();
+
+  await handleApiRequest({
+    runtime,
+    request: createJsonRequest({
+      method: 'PUT',
+      url: API_ROUTES.MONITOR_SETTINGS,
+      body: { backendMode: 'auditd' }
+    }),
+    response
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.payload, { backendMode: 'auditd' });
+  assert.deepEqual(runtime.updateMonitorSettingsCalls, [{ backendMode: 'auditd' }]);
+});
+
+test('handleApiRequest rejects invalid monitor backend settings', async () => {
+  const runtime = createRuntimeDouble();
+  const response = createResponseDouble();
+
+  await assert.rejects(
+    handleApiRequest({
+      runtime,
+      request: createJsonRequest({
+        method: 'PUT',
+        url: API_ROUTES.MONITOR_SETTINGS,
+        body: { backendMode: 'fanotify' }
+      }),
+      response
+    }),
+    /monitor\.backendMode must be auto, auditd, or inotify/
+  );
+});
+
 test('handleApiRequest switches watch target through POST /api/watch/target', async () => {
   const runtime = createRuntimeDouble();
   const response = createResponseDouble();
@@ -554,8 +592,12 @@ function createRuntimeDouble() {
     updateDetectionPolicyCalls: [],
     resetDetectionPolicyCalls: 0,
     updateDemoSettingsCalls: [],
+    updateMonitorSettingsCalls: [],
     demoSettings: {
       fileCount: 15
+    },
+    monitorSettings: {
+      backendMode: 'auto'
     },
     responsePolicy: {
       lockDirectoryPermissions: true,
@@ -624,6 +666,14 @@ function createRuntimeDouble() {
     },
     getDemoSettings() {
       return { ...this.demoSettings };
+    },
+    getMonitorSettings() {
+      return { ...this.monitorSettings };
+    },
+    async updateMonitorSettings(settings) {
+      this.updateMonitorSettingsCalls.push(settings);
+      this.monitorSettings = { backendMode: settings.backendMode };
+      return this.getMonitorSettings();
     },
     async updateDemoSettings(settings) {
       this.updateDemoSettingsCalls.push(settings);

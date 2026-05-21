@@ -24,7 +24,7 @@ const SAFE_KILL_PATH_SEGMENT = 'demo-target';
  * - 상태 흐름: DETECTED → QUARANTINING → QUARANTINED → RESTORED / FAILED
  */
 export class QuarantineService {
-  constructor({ eventBus, getResponsePolicy, getWatchTargets }) {
+  constructor({ eventBus, getResponsePolicy, getWatchTargets, processKiller = process.kill }) {
     this.eventBus = eventBus;
     this.getResponsePolicy = getResponsePolicy ?? (() => ({
       lockDirectoryPermissions: true,
@@ -33,6 +33,7 @@ export class QuarantineService {
       quarantineScope: 'incident-target'
     }));
     this.getWatchTargets = getWatchTargets ?? (() => []);
+    this.processKiller = processKiller;
 
     // incidentId -> { rootPath, rootPaths, records: [{ rootPath, entries }] }
     this.quarantineRecords = new Map();
@@ -116,7 +117,10 @@ export class QuarantineService {
       // 해당 경로를 점유 중인 프로세스 종료 (demo-target 범위만)
       if (responsePolicy.killSuspectProcesses) {
         for (const rootPath of rootPaths) {
-          const killedPids = await killProcessesSafe(rootPath);
+          const killedPids = await killProcessesSafe(rootPath, {
+            suspectProcesses: incident.suspectProcesses,
+            killProcess: this.processKiller
+          });
           await appendLog({
             eventType: 'quarantine_progress',
             incidentId: incident.id,
@@ -519,17 +523,24 @@ function parseProgressOutput(stdout) {
  * @param {string} rootPath
  * @returns {Promise<number[]>} 종료 시도한 PID 목록
  */
-async function killProcessesSafe(rootPath) {
+async function killProcessesSafe(rootPath, { suspectProcesses = [], killProcess = process.kill } = {}) {
   const resolvedRootPath = path.resolve(rootPath);
   if (!isSafeKillRoot(resolvedRootPath)) {
     return [];
   }
 
-  const pids = await collectPids(resolvedRootPath);
   const excludedPids = new Set([1, process.pid, process.ppid].filter(Boolean));
   const safePids = [];
   const seenPids = new Set();
 
+  for (const pid of collectSuspectPids(suspectProcesses, resolvedRootPath)) {
+    if (!excludedPids.has(pid) && !seenPids.has(pid)) {
+      seenPids.add(pid);
+      safePids.push(pid);
+    }
+  }
+
+  const pids = await collectPids(resolvedRootPath);
   for (const pid of pids) {
     if (excludedPids.has(pid) || seenPids.has(pid)) {
       continue;
@@ -544,11 +555,11 @@ async function killProcessesSafe(rootPath) {
   const killed = [];
   for (const pid of safePids) {
     try {
-      process.kill(pid, 'SIGTERM');
+      killProcess(pid, 'SIGTERM');
       killed.push(pid);
     } catch {
       try {
-        process.kill(pid, 'SIGKILL');
+        killProcess(pid, 'SIGKILL');
         killed.push(pid);
       } catch {
         // 이미 종료됐거나 권한 없음 – 무시
@@ -556,6 +567,17 @@ async function killProcessesSafe(rootPath) {
     }
   }
   return killed;
+}
+
+function collectSuspectPids(suspectProcesses, rootPath) {
+  if (!Array.isArray(suspectProcesses)) {
+    return [];
+  }
+
+  return suspectProcesses
+    .filter((processInfo) => isPathInside(processInfo?.path ?? rootPath, rootPath))
+    .map((processInfo) => Number(processInfo?.pid))
+    .filter((pid) => Number.isInteger(pid) && pid > 1);
 }
 
 /**

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createRuntime } from '../src/app/runtime.js';
+import { startAttack } from '../src/simulator/demo.js';
 import { EVENT_NAMES } from '../src/shared/contracts/event-names.js';
 
 const PROJECT_ROOT = process.cwd();
@@ -139,6 +140,49 @@ test('createRuntime updates demo file count settings', async () => {
 
   assert.deepEqual(settings, { fileCount: 9 });
   assert.equal(runtime.getSnapshot().demoSettings.fileCount, 9);
+});
+
+test('resetDemo clears current rule weights', async () => {
+  const runtime = createRuntime(createConfig());
+  const weightUpdates = [];
+  runtime.eventBus.on(EVENT_NAMES.RULE_WEIGHT_UPDATED, (payload) => {
+    weightUpdates.push(payload);
+  });
+
+  for (let index = 1; index <= 6; index += 1) {
+    runtime.eventBus.emit(EVENT_NAMES.FS_EVENT, {
+      id: `weight-before-reset-${index}`,
+      type: 'modify',
+      observedTs: 1000 + index,
+      observedAt: new Date(1000 + index).toISOString(),
+      path: `/tmp/watch/weight-before-reset-${index}.locked`,
+      monitorTargetId: 'sandbox',
+      monitorRootPath: '/tmp/configured-watch'
+    });
+  }
+
+  assert.equal(weightUpdates.at(-1).currentWeight, 12);
+  assert.equal(runtime.getSnapshot().health.rules.activeRuleWindows, 1);
+
+  await runtime.resetDemo();
+
+  assert.equal(weightUpdates.at(-1).eventType, 'reset');
+  assert.equal(weightUpdates.at(-1).currentWeight, 0);
+  assert.equal(runtime.getSnapshot().health.rules.activeRuleWindows, 0);
+
+  runtime.eventBus.emit(EVENT_NAMES.FS_EVENT, {
+    id: 'weight-after-reset',
+    type: 'modify',
+    observedTs: 2000,
+    observedAt: new Date(2000).toISOString(),
+    path: '/tmp/watch/weight-after-reset.locked',
+    monitorTargetId: 'sandbox',
+    monitorRootPath: '/tmp/configured-watch'
+  });
+
+  assert.equal(weightUpdates.at(-1).currentWeight, 2);
+
+  await runtime.stop();
 });
 
 test('createRuntime updates detection policy and persists it when configPath exists', async () => {
@@ -363,6 +407,9 @@ test('startDemo runs worker child and republishes worker file events', async () 
   assert.equal(fsEvent.type, 'modify');
   assert.equal(fsEvent.path, path.join(DEMO_TARGET_ROOT, 'file_1.txt'));
   assert.equal(fsEvent.monitorRootPath, DEMO_TARGET_ROOT);
+  assert.equal(fsEvent.pid, worker.pid);
+  assert.equal(fsEvent.comm, 'team404-demo-worker');
+  assert.equal(fsEvent.source, 'demo-worker');
 });
 
 test('startDemo maps worker blocked message to DEMO_ABORTED details', async () => {
@@ -398,6 +445,54 @@ test('startDemo maps worker blocked message to DEMO_ABORTED details', async () =
   assert.equal(aborted.blockedPath, path.join(DEMO_TARGET_ROOT, 'file_4.txt'));
 });
 
+test('startDemo preserves active demo quarantine instead of resetting target permissions', async () => {
+  const worker = createFakeDemoWorker();
+  const runtime = createRuntime(createConfig(), {
+    watchOptions: { demo: true },
+    demoProcessFactory: () => worker
+  });
+
+  try {
+    await clearDemoTarget();
+    await fs.writeFile(path.join(DEMO_TARGET_ROOT, 'file_1.txt'), 'original content 1');
+
+    const quarantineCompleted = waitForEvent(runtime.eventBus, EVENT_NAMES.QUARANTINE_COMPLETED);
+    runtime.eventBus.emit(EVENT_NAMES.INCIDENT_OPENED, {
+      id: 'incident-demo-quarantine',
+      autoQuarantine: true,
+      monitorTargetId: 'demo-target',
+      monitorRootPath: DEMO_TARGET_ROOT,
+      suspectProcesses: []
+    });
+    await quarantineCompleted;
+
+    assert.equal((await fs.stat(DEMO_TARGET_ROOT)).mode & 0o777, 0);
+
+    const snapshot = await runtime.startDemo();
+
+    assert.equal(snapshot.demo.status, 'running');
+    assert.equal((await fs.stat(DEMO_TARGET_ROOT)).mode & 0o777, 0);
+  } finally {
+    await runtime.stop();
+    await clearDemoTarget();
+  }
+});
+
+test('startAttack reports blocked when demo target permissions are locked', async () => {
+  try {
+    await clearDemoTarget();
+    await fs.chmod(DEMO_TARGET_ROOT, 0o000);
+
+    const result = await startAttack(null, { fileCount: 1 });
+
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.errorCode, 'EACCES');
+    assert.equal(result.blockedPath, path.join(DEMO_TARGET_ROOT, 'file_1.txt'));
+  } finally {
+    await clearDemoTarget();
+  }
+});
+
 test('stopDemo sends abort to running worker', async () => {
   const worker = createFakeDemoWorker();
   const runtime = createRuntime(createConfig(), {
@@ -414,6 +509,53 @@ test('stopDemo sends abort to running worker', async () => {
   worker.emit('message', { type: 'aborted', payload: { status: 'aborted' } });
   assert.equal(runtime.getSnapshot().demo.status, 'aborted');
 });
+
+async function clearDemoTarget() {
+  await unlockDemoTarget();
+  await fs.mkdir(DEMO_TARGET_ROOT, { recursive: true, mode: 0o755 });
+  await fs.chmod(DEMO_TARGET_ROOT, 0o755).catch(() => {});
+
+  const entries = await fs.readdir(DEMO_TARGET_ROOT, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    await fs.rm(path.join(DEMO_TARGET_ROOT, entry.name), { recursive: true, force: true });
+  }
+}
+
+async function unlockDemoTarget(rootPath = DEMO_TARGET_ROOT) {
+  try {
+    const stat = await fs.stat(rootPath);
+    await fs.chmod(rootPath, stat.isDirectory() ? 0o755 : 0o644).catch(() => {});
+
+    if (!stat.isDirectory()) {
+      return;
+    }
+
+    const entries = await fs.readdir(rootPath, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      await unlockDemoTarget(path.join(rootPath, entry.name));
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      throw error;
+    }
+  }
+}
+
+function waitForEvent(eventBus, eventName, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      eventBus.off(eventName, onEvent);
+      reject(new Error(`Timed out waiting for ${eventName}`));
+    }, timeoutMs);
+
+    function onEvent(payload) {
+      clearTimeout(timer);
+      resolve(payload);
+    }
+
+    eventBus.once(eventName, onEvent);
+  });
+}
 
 function createFakeDemoWorker() {
   const worker = new EventEmitter();

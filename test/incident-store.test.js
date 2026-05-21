@@ -22,7 +22,16 @@ test('IncidentStore preserves enriched rule_match fields across incident updates
     samplePaths: ['/tmp/watch/a.txt'],
     eventTypes: ['modify'],
     monitorTargetId: 'sandbox',
-    monitorRootPath: '/tmp/watch'
+    monitorRootPath: '/tmp/watch',
+    suspectProcesses: [
+      {
+        pid: 4242,
+        comm: 'team404-demo-worker',
+        exe: '/home/minmul-ubuntu/team404/src/simulator/demo-worker.js',
+        source: 'demo-worker',
+        path: '/tmp/watch/a.txt'
+      }
+    ]
   });
 
   eventBus.emit(EVENT_NAMES.RULE_MATCH, {
@@ -38,7 +47,16 @@ test('IncidentStore preserves enriched rule_match fields across incident updates
     samplePaths: ['/tmp/watch/b.txt'],
     eventTypes: ['delete'],
     monitorTargetId: 'sandbox',
-    monitorRootPath: '/tmp/watch'
+    monitorRootPath: '/tmp/watch',
+    suspectProcesses: [
+      {
+        pid: 4243,
+        comm: 'node',
+        exe: '/usr/local/bin/node',
+        source: 'auditd',
+        path: '/tmp/watch/b.txt'
+      }
+    ]
   });
 
   const [incident] = incidentStore.getIncidents();
@@ -50,6 +68,10 @@ test('IncidentStore preserves enriched rule_match fields across incident updates
   assert.equal(incident.autoQuarantine, true);
   assert.equal(incident.reason, 'delete events reached 5/5 within 1000ms');
   assert.deepEqual(incident.eventTypes, ['modify', 'delete']);
+  assert.deepEqual(
+    incident.suspectProcesses.map((processInfo) => processInfo.pid),
+    [4242, 4243]
+  );
   assert.deepEqual(incident.matchedRuleIds, ['burst-modify', 'burst-delete']);
   assert.deepEqual(incident.matchedRuleNames, ['Bulk Modify Burst', 'Bulk Delete Burst']);
   assert.equal(latestAlert.ruleId, 'burst-delete');

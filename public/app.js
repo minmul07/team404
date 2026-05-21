@@ -61,9 +61,10 @@ socket.onmessage = (event) => {
   switch (msg.type) {
     case 'CONNECTED':
       updateDemoServerStatus({ demo: msg.payload?.demo });
+      updateMonitorBackendStatus(msg.payload);
       break;
     case 'SYSTEM_HEALTH':
-      setServerStatus('online', '메인 서버 연결됨 (감시 및 격리)');
+      updateMonitorBackendStatus(msg.payload?.details ?? msg.payload);
       break;
     case 'RULE_WEIGHT_UPDATED':
       cacheRuleWeight(msg.payload);
@@ -151,6 +152,33 @@ function updateDemoServerStatus(snapshot = {}) {
   setDemoServerStatus('idle', '데모 서버 대기');
 }
 
+function updateMonitorBackendStatus(snapshot = {}) {
+  const monitor = snapshot.monitor ?? snapshot.health?.monitor ?? snapshot;
+  const activeBackend = monitor.activeBackend ?? snapshot.activeBackend;
+  const requestedBackend = monitor.requestedBackend ?? snapshot.requestedBackend ?? 'auto';
+  const fallbackReason = monitor.fallbackReason ?? snapshot.fallbackReason;
+  const pidTrackingAvailable = Boolean(monitor.pidTrackingAvailable ?? snapshot.pidTrackingAvailable);
+  const status = monitor.status ?? snapshot.status;
+
+  if (fallbackReason) {
+    setServerStatus('warning', `감시 fallback: inotify (${fallbackReason})`);
+    return;
+  }
+
+  if (status === 'degraded') {
+    setServerStatus('warning', `감시 degraded (${requestedBackend})`);
+    return;
+  }
+
+  if (activeBackend) {
+    const pidLabel = pidTrackingAvailable ? ' / PID 추적' : '';
+    setServerStatus('online', `메인 서버 연결됨 (${activeBackend}${pidLabel})`);
+    return;
+  }
+
+  setServerStatus('online', '메인 서버 연결됨 (감시 및 격리)');
+}
+
 
 async function loadState() {
   try {
@@ -166,10 +194,12 @@ async function loadState() {
     if (wCount) wCount.innerText = String(snapshot.watchedFileCount ?? 0);
 
     updateDemoServerStatus(snapshot);
+    updateMonitorBackendStatus(snapshot);
     updateWatchButtonLabel(snapshot.watchEnabled);
     updateWatchTargetControls(snapshot);
     updateDemoControls(snapshot);
     updateDemoSettingsControls(snapshot);
+    updateMonitorSettingsControls(snapshot);
     updateResponsePolicyControls(snapshot.responsePolicy);
     updateDetectionPolicyControls(snapshot.detectionPolicy);
     updateRuleWeightDisplay(latestRuleWeight ?? {
@@ -325,6 +355,79 @@ function updateDemoSettingsControls(snapshot = {}) {
     error.hidden = true;
     error.innerText = '';
   }
+}
+
+function updateMonitorSettingsControls(snapshot = {}) {
+  const monitor = snapshot.health?.monitor ?? snapshot.monitor ?? snapshot;
+  const selectedMode = monitor.requestedBackend ?? snapshot.requestedBackend ?? 'auto';
+  const activeBackend = monitor.activeBackend ?? snapshot.activeBackend ?? '-';
+  const fallbackReason = monitor.fallbackReason ?? snapshot.fallbackReason;
+  const pidTrackingAvailable = Boolean(monitor.pidTrackingAvailable ?? snapshot.pidTrackingAvailable);
+  const status = document.getElementById('monitor-settings-status');
+  const error = document.getElementById('monitor-settings-error');
+
+  document.querySelectorAll('input[name="monitor-backend-mode"]').forEach((radio) => {
+    if (document.activeElement !== radio) {
+      radio.checked = radio.value === selectedMode;
+    }
+  });
+
+  if (status) {
+    if (fallbackReason) {
+      status.innerText = `활성화: ${activeBackend} / fallback: ${fallbackReason}`;
+    } else {
+      status.innerText = `활성화: ${activeBackend}${pidTrackingAvailable ? ' / PID 추적 가능' : ''}`;
+    }
+  }
+
+  if (error) {
+    error.hidden = true;
+    error.innerText = '';
+  }
+}
+
+async function handleMonitorSettingsSave(event) {
+  event.preventDefault();
+
+  const saveBtn = document.getElementById('btn-monitor-settings-save');
+  const selectedMode = document.querySelector('input[name="monitor-backend-mode"]:checked')?.value ?? 'auto';
+
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.innerText = '저장 중';
+  }
+
+  try {
+    const response = await fetch(`${API_URL}/settings/monitor`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ backendMode: selectedMode })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      showMonitorSettingsError(error.message || error.error || '감시 환경 저장 실패');
+      return;
+    }
+
+    showNotification('감시 환경이 저장되었습니다.');
+    await loadState();
+  } catch (err) {
+    console.error(err);
+    showMonitorSettingsError('감시 환경 저장 중 네트워크 오류가 발생했습니다.');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerText = '저장';
+    }
+  }
+}
+
+function showMonitorSettingsError(message) {
+  const error = document.getElementById('monitor-settings-error');
+  if (!error) return;
+  error.hidden = false;
+  error.innerText = message;
 }
 
 function updateResponsePolicyControls(policy = {}) {
@@ -602,7 +705,9 @@ async function handleDemoReset() {
     });
 
     if (response.ok) {
-      showNotification('데모 폴더와 Incident 관리 항목이 초기화되었습니다.');
+      latestRuleWeight = null;
+      updateRuleWeightDisplay({ currentWeight: 0, thresholdWeight: detectionPolicyDraft.thresholdWeight });
+      showNotification('데모 폴더, Incident 관리 항목, 현재 가중치가 초기화되었습니다.');
       await loadState();
     } else {
       const error = await response.json();
@@ -1202,6 +1307,9 @@ function normalizeFileEvent(payload) {
     eventType: payload.type ?? 'event',
     path: payload.path,
     pid: payload.pid,
+    comm: payload.comm,
+    exe: payload.exe,
+    source: payload.source,
     observedAt: payload.observedAt ?? new Date().toISOString(),
     weight
   };
@@ -1289,8 +1397,8 @@ function renderRestoreEntry(entry) {
     <div class="log-entry restore">
       <div class="log-meta">
         <span class="log-time">${time}</span>
-        <span class="severity low">RESTORED</span>
-        <span class="log-type">권한 복원 완료</span>
+        <span class="severity success">복원 완료</span>
+        <span class="log-type">권한 복원</span>
       </div>
       <div class="log-reason">ID: ${escapeHtml(entry.incidentId ?? '-')}</div>
     </div>
@@ -1299,15 +1407,15 @@ function renderRestoreEntry(entry) {
 
 function renderDemoEntry(entry) {
   const time = formatTime(entry.observedAt);
-  const status = String(entry.status ?? 'event').toUpperCase();
-  const severityClass = entry.status === 'completed' ? 'success' : entry.status === 'failed' ? 'danger' : 'low';
+  const statusLabel = getDemoStatusLabel(entry.status);
+  const severityClass = entry.status === 'completed' ? 'success' : entry.status === 'failed' ? 'error' : 'low';
 
   return `
     <div class="log-entry alert-demo">
       <div class="log-meta">
         <span class="log-time">${time}</span>
-        <span class="severity ${severityClass}">DEMO</span>
-        <span class="log-type">${escapeHtml(status)}</span>
+        <span class="severity ${severityClass}">${escapeHtml(statusLabel)}</span>
+        <span class="log-type">데모</span>
       </div>
       ${entry.reason ? `<div class="log-reason">${escapeHtml(entry.reason)}</div>` : ''}
     </div>
@@ -1316,17 +1424,16 @@ function renderDemoEntry(entry) {
 
 function renderAlertEntry(alert) {
   const time = formatTime(alert.observedAt);
-  const type = alert.ruleId ? 'RULE_MATCH' : (alert.eventType?.toUpperCase() ?? 'MATCH');
-  const severity = alert.severity?.toUpperCase() ?? 'HIGH';
-  const typeClass = `alert-${type.toLowerCase().replace(/_/g, '-')}`;
-  const severityClass = severity.toLowerCase();
+  const type = alert.ruleId ? 'rule_match' : (alert.eventType ?? 'match');
+  const typeClass = `alert-${String(type).toLowerCase().replace(/_/g, '-')}`;
+  const severity = String(alert.severity ?? 'high').toLowerCase();
 
   return `
     <div class="log-entry ${typeClass}">
       <div class="log-meta">
         <span class="log-time">${time}</span>
-        <span class="severity ${escapeHtml(severityClass)}">${escapeHtml(severity)}</span>
-        <span class="log-type">${escapeHtml(type)}</span>
+        <span class="severity ${escapeHtml(severity)}">${escapeHtml(getSeverityLabel(severity))}</span>
+        <span class="log-type">${escapeHtml(getIncidentTypeLabel(type))}</span>
         ${alert.ruleName ? `<span class="log-rule">${escapeHtml(alert.ruleName)}</span>` : ''}
       </div>
       ${alert.samplePaths?.length ? renderFileChips(extractFileNames(alert.samplePaths)) : ''}
@@ -1338,8 +1445,8 @@ function renderAlertEntry(alert) {
 
 function renderQuarantineEntry(entry) {
   const time = formatTime(entry.observedAt);
-  const statusLabel = entry.status.toUpperCase();
-  const severityClass = entry.status === 'completed' ? 'success' : entry.status === 'failed' ? 'danger' : 'low';
+  const statusLabel = getQuarantineStatusLabel(entry.status);
+  const severityClass = entry.status === 'completed' ? 'success' : entry.status === 'failed' ? 'error' : 'low';
   const pathLabel = formatRootPaths(entry.rootPaths, entry.rootPath);
 
   return `
@@ -1347,12 +1454,61 @@ function renderQuarantineEntry(entry) {
       <div class="log-meta">
         <span class="log-time">${time}</span>
         <span class="severity ${severityClass}">${escapeHtml(statusLabel)}</span>
-        <span class="log-type">QUARANTINE</span>
+        <span class="log-type">격리</span>
       </div>
       <div class="log-path">${escapeHtml(pathLabel)}</div>
       <div class="log-reason">ID: ${escapeHtml(entry.incidentId ?? '-')} · ${Number(entry.entryCount) || 0}개 항목</div>
     </div>
   `;
+}
+
+
+function getQuarantineStatusLabel(status) {
+  const labels = {
+    started: '격리 시작',
+    completed: '격리 완료',
+    failed: '격리 실패',
+    quarantining: '격리 중',
+    quarantined: '격리됨'
+  };
+  return labels[status] ?? '격리 상태';
+}
+
+function getDemoStatusLabel(status) {
+  const labels = {
+    started: '데모 시작',
+    running: '데모 실행 중',
+    stopping: '데모 중지 중',
+    aborted: '데모 중단',
+    completed: '데모 완료',
+    failed: '데모 실패',
+    ready: '데모 대기'
+  };
+  return labels[status] ?? '데모 상태';
+}
+
+function getSeverityLabel(severity) {
+  const labels = {
+    critical: '심각',
+    high: '높음',
+    medium: '보통',
+    low: '낮음',
+    success: '성공',
+    error: '오류'
+  };
+  return labels[severity] ?? severity;
+}
+
+function getIncidentTypeLabel(type) {
+  const labels = {
+    rule_match: '탐지',
+    create: '생성 탐지',
+    modify: '변경 탐지',
+    delete: '삭제 탐지',
+    rename: '이름 변경 탐지',
+    match: '탐지'
+  };
+  return labels[String(type).toLowerCase()] ?? '탐지';
 }
 
 function formatRootPaths(rootPaths = [], fallback = '-') {
@@ -1372,16 +1528,27 @@ function renderFileEventEntry(entry) {
     <div class="log-entry ${escapeHtml(typeClass)}">
       <div class="log-meta">
         <span class="log-time">${time}</span>
-        <span class="severity low">FILE</span>
         <span class="log-type">${escapeHtml(type)}</span>
       </div>
       <div class="log-path">${escapeHtml(entry.path ?? '')}</div>
-      <div class="log-reason">
-        PID: ${escapeHtml(String(entry.pid ?? '-'))}
-        ${entry.weight ? renderInlineWeightBadge(entry.weight) : ''}
-      </div>
+      ${renderProcessLine(entry)}
+      ${entry.weight ? renderFsEventWeightValue(entry.weight) : ''}
     </div>
   `;
+}
+
+function renderProcessLine(entry) {
+  if (entry.pid === undefined || entry.pid === null || entry.pid === '') {
+    return '';
+  }
+
+  const details = [
+    `PID ${entry.pid}`,
+    entry.comm ? `comm ${entry.comm}` : '',
+    entry.exe ? `exe ${entry.exe}` : ''
+  ].filter(Boolean).join(' / ');
+
+  return `<div class="log-reason">${escapeHtml(details)}</div>`;
 }
 
 function updateRuleWeightDisplay(payload = {}) {
@@ -1403,8 +1570,8 @@ function updateRuleWeightDisplay(payload = {}) {
   }
 }
 
-function renderInlineWeightBadge(weight) {
-  return `<span class="weight-badge">가중치 ${formatPolicyNumber(weight.currentWeight)} / ${formatPolicyNumber(weight.thresholdWeight)}</span>`;
+function renderFsEventWeightValue(weight) {
+  return `<span class="fs-weight-value">${formatPolicyNumber(weight.currentWeight)}</span>`;
 }
 
 function renderWeightLine(alert) {
@@ -1432,10 +1599,16 @@ function extractFileNames(paths = []) {
 }
 
 function formatTime(value) {
-  return new Date(value).toLocaleTimeString('ko-KR', {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '-';
+  }
+
+  return date.toLocaleTimeString('ko-KR', {
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit'
+    second: '2-digit',
+    fractionalSecondDigits: 3
   });
 }
 
@@ -1494,6 +1667,7 @@ document.getElementById('watch-target-list')?.addEventListener('input', handleWa
 document.getElementById('watch-target-list')?.addEventListener('click', handleWatchPathRemove);
 document.getElementById('response-policy-form')?.addEventListener('submit', handleResponsePolicySave);
 document.getElementById('demo-settings-form')?.addEventListener('submit', handleDemoSettingsSave);
+document.getElementById('monitor-settings-form')?.addEventListener('submit', handleMonitorSettingsSave);
 document.getElementById('detection-policy-form')?.addEventListener('submit', handleDetectionPolicySave);
 document.getElementById('detection-policy-form')?.addEventListener('input', handleDetectionPolicyRangeInput);
 document.getElementById('detection-policy-form')?.addEventListener('input', handleDetectionPolicyNumberInput);

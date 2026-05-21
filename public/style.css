@@ -193,6 +193,8 @@ textarea {
 
 .status-group {
     min-height: 34px;
+    min-width: 0;
+    max-width: 360px;
     display: flex;
     align-items: center;
     gap: 0.65rem;
@@ -204,6 +206,12 @@ textarea {
     font-size: 0.78rem;
     font-weight: 600;
     white-space: nowrap;
+}
+
+.status-group span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .dot {
@@ -561,6 +569,16 @@ button:disabled {
     grid-row: 2;
 }
 
+.fs-log-card .log-viewer,
+.incident-log-card .log-viewer {
+    min-height: 260px;
+    max-height: min(46vh, 520px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    -webkit-overflow-scrolling: touch;
+}
+
 .management-card {
     grid-column: 1 / -1;
     grid-row: 3;
@@ -575,6 +593,7 @@ button:disabled {
 }
 
 .log-entry {
+    position: relative;
     display: grid;
     gap: 0.26rem;
     padding: 0.45rem 0.55rem;
@@ -626,6 +645,13 @@ button:disabled {
     color: var(--danger);
 }
 
+.log-entry.file-create,
+.log-entry.file-modify,
+.log-entry.file-delete {
+    padding-right: 3.5rem;
+    padding-bottom: 0.72rem;
+}
+
 .log-entry.restore {
     border-left-color: var(--success);
 }
@@ -665,18 +691,14 @@ button:disabled {
     color: var(--text-muted);
 }
 
-.weight-badge {
-    display: inline-flex;
-    align-items: center;
-    min-height: 18px;
-    margin-left: 0.25rem;
-    padding: 0.08rem 0.36rem;
-    border: 1px solid var(--primary);
-    border-radius: 0;
-    background: var(--badge-bg);
-    color: var(--badge-text);
-    font-size: 0.66rem;
-    font-weight: 600;
+.fs-weight-value {
+    position: absolute;
+    right: 0.55rem;
+    bottom: 0.34rem;
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    font-weight: 500;
+    line-height: 1;
 }
 
 .severity,
@@ -957,9 +979,14 @@ button:disabled {
     gap: 1.1rem;
 }
 
-.demo-settings-form {
+.demo-settings-form,
+.monitor-backend-form {
     display: grid;
     gap: 0.85rem;
+}
+
+.monitor-backend-form .theme-options {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .demo-number-control {
@@ -1283,7 +1310,8 @@ button:disabled {
         min-width: 560px;
     }
 
-    .theme-options {
+    .theme-options,
+    .monitor-backend-form .theme-options {
         grid-template-columns: 1fr;
     }
 
@@ -1327,6 +1355,7 @@ button:disabled {
 
     .status-group {
         justify-content: center;
+        max-width: none;
     }
 
     /* Touch-friendly menu items */

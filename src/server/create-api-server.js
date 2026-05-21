@@ -100,6 +100,16 @@ export async function handleApiRequest({ runtime, request, response }) {
     return writeJson(response, 200, normalizeDemoSettings(runtime.getDemoSettings?.()));
   }
 
+  if (request.method === 'GET' && url.pathname === API_ROUTES.MONITOR_SETTINGS) {
+    return writeJson(response, 200, normalizeMonitorSettings(runtime.getMonitorSettings?.()));
+  }
+
+  if (request.method === 'PUT' && url.pathname === API_ROUTES.MONITOR_SETTINGS) {
+    const payload = await readJsonBody(request);
+    const settings = validateMonitorSettingsPayload(payload);
+    return writeJson(response, 200, normalizeMonitorSettings(await runtime.updateMonitorSettings(settings)));
+  }
+
   if (request.method === 'PUT' && url.pathname === API_ROUTES.DEMO_SETTINGS) {
     const payload = await readJsonBody(request);
     validateDemoSettingsPayload(payload);
@@ -333,6 +343,24 @@ function normalizeDemoSettings(settings = {}) {
   return {
     fileCount: Number.isInteger(settings?.fileCount) ? settings.fileCount : 15
   };
+}
+
+function normalizeMonitorSettings(settings = {}) {
+  const backendMode = settings?.backendMode;
+  return {
+    backendMode: backendMode === 'auditd' || backendMode === 'inotify' || backendMode === 'auto'
+      ? backendMode
+      : 'auto'
+  };
+}
+
+function validateMonitorSettingsPayload(payload) {
+  const backendMode = payload?.backendMode;
+  if (backendMode !== 'auto' && backendMode !== 'auditd' && backendMode !== 'inotify') {
+    throw createBadRequest('monitor.backendMode must be auto, auditd, or inotify');
+  }
+
+  return { backendMode };
 }
 
 function validateDemoSettingsPayload(payload) {

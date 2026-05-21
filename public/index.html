@@ -228,6 +228,43 @@
                 </fieldset>
             </section>
 
+
+            <section class="card settings-card">
+                <div class="section-header">
+                    <h2>감시 환경</h2>
+                </div>
+                <form id="monitor-settings-form" class="monitor-backend-form">
+                    <fieldset class="theme-options" aria-label="감시 backend 선택">
+                        <label class="theme-option">
+                            <input type="radio" name="monitor-backend-mode" value="auto">
+                            <span class="theme-copy">
+                                <strong>자동</strong>
+                                <span>auditd를 우선 사용하고 실패 시 inotify로 전환합니다.</span>
+                            </span>
+                        </label>
+                        <label class="theme-option">
+                            <input type="radio" name="monitor-backend-mode" value="auditd">
+                            <span class="theme-copy">
+                                <strong>auditd</strong>
+                                <span>PID 추적이 가능하지만 auditctl 권한과 audit log 접근이 필요합니다.</span>
+                            </span>
+                        </label>
+                        <label class="theme-option">
+                            <input type="radio" name="monitor-backend-mode" value="inotify">
+                            <span class="theme-copy">
+                                <strong>inotify</strong>
+                                <span>기존 파일 이벤트 감시를 사용하며 PID 정보는 제공하지 않습니다.</span>
+                            </span>
+                        </label>
+                    </fieldset>
+                    <p id="monitor-settings-error" class="field-error" hidden></p>
+                    <div class="settings-actions">
+                        <button id="btn-monitor-settings-save" class="btn-primary" type="submit">저장</button>
+                        <span id="monitor-settings-status" class="settings-status">현재 감시 환경을 불러오는 중</span>
+                    </div>
+                </form>
+            </section>
+
             <section class="card settings-card">
                 <div class="section-header">
                     <h2>데모 설정</h2>

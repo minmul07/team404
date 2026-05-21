@@ -126,3 +126,142 @@ test('MonitorService can switch to a new target path after creation', async () =
   assert.equal(service.getHealth().activeTarget.rootPath, '/tmp/configured-watch');
   assert.equal(service.getHealth().targets.length, 2);
 });
+
+
+test('MonitorService auto mode uses auditd backend when it starts', async () => {
+  const auditdBackends = [];
+  const inotifyBackends = [];
+  const config = createConfig();
+  config.monitor.backendMode = 'auto';
+  const service = new MonitorService({
+    config,
+    eventBus: createEventBus(),
+    backendFactories: {
+      auditd: createBackendFactory('auditd', auditdBackends),
+      inotify: createBackendFactory('inotify', inotifyBackends)
+    }
+  });
+
+  await service.start();
+
+  const health = service.getHealth();
+  assert.equal(health.requestedBackend, 'auto');
+  assert.equal(health.activeBackend, 'auditd');
+  assert.equal(health.pidTrackingAvailable, true);
+  assert.equal(auditdBackends.length, 1);
+  assert.equal(inotifyBackends.length, 0);
+
+  await service.stop();
+});
+
+test('MonitorService auto mode falls back to inotify when auditd fails', async () => {
+  const auditdBackends = [];
+  const inotifyBackends = [];
+  const config = createConfig();
+  config.monitor.backendMode = 'auto';
+  const service = new MonitorService({
+    config,
+    eventBus: createEventBus(),
+    backendFactories: {
+      auditd: createBackendFactory('auditd', auditdBackends, { failStart: true, failMessage: 'auditctl denied' }),
+      inotify: createBackendFactory('inotify', inotifyBackends)
+    }
+  });
+
+  await service.start();
+
+  const health = service.getHealth();
+  assert.equal(health.status, 'running');
+  assert.equal(health.activeBackend, 'inotify');
+  assert.equal(health.pidTrackingAvailable, false);
+  assert.equal(health.fallbackReason, 'auditctl denied');
+
+  await service.stop();
+});
+
+test('MonitorService auditd mode degrades without fallback when auditd fails', async () => {
+  const auditdBackends = [];
+  const inotifyBackends = [];
+  const config = createConfig();
+  config.monitor.backendMode = 'auditd';
+  const service = new MonitorService({
+    config,
+    eventBus: createEventBus(),
+    backendFactories: {
+      auditd: createBackendFactory('auditd', auditdBackends, { failStart: true, failMessage: 'audit log unreadable' }),
+      inotify: createBackendFactory('inotify', inotifyBackends)
+    }
+  });
+
+  await service.start();
+
+  const health = service.getHealth();
+  assert.equal(health.status, 'degraded');
+  assert.equal(health.activeBackend, 'auditd');
+  assert.equal(health.fallbackReason, null);
+  assert.equal(health.lastError, 'audit log unreadable');
+  assert.equal(inotifyBackends.length, 0);
+});
+
+test('MonitorService restarts backend when backend mode changes', async () => {
+  const auditdBackends = [];
+  const inotifyBackends = [];
+  const config = createConfig();
+  config.monitor.backendMode = 'inotify';
+  const service = new MonitorService({
+    config,
+    eventBus: createEventBus(),
+    backendFactories: {
+      auditd: createBackendFactory('auditd', auditdBackends),
+      inotify: createBackendFactory('inotify', inotifyBackends)
+    }
+  });
+
+  await service.start();
+  await service.setBackendMode('auditd');
+
+  assert.equal(config.monitor.backendMode, 'auditd');
+  assert.equal(inotifyBackends[0].stopCalls, 1);
+  assert.equal(auditdBackends[0].startCalls, 1);
+  assert.equal(service.getHealth().activeBackend, 'auditd');
+
+  await service.stop();
+});
+
+function createBackendFactory(name, store, options = {}) {
+  return ({ onHealth }) => {
+    const backend = {
+      startCalls: 0,
+      stopCalls: 0,
+      status: 'idle',
+      pid: name === 'auditd' ? 4242 : 3131,
+      lastError: null,
+      async start() {
+        this.startCalls += 1;
+        if (options.failStart) {
+          this.lastError = options.failMessage ?? `${name} failed`;
+          throw new Error(this.lastError);
+        }
+        this.status = 'running';
+        onHealth(this.getHealth());
+      },
+      async stop() {
+        this.stopCalls += 1;
+        this.status = 'stopped';
+        onHealth(this.getHealth());
+      },
+      getHealth() {
+        return {
+          name,
+          status: this.status,
+          pid: this.status === 'running' ? this.pid : null,
+          lastEventAt: null,
+          lastError: this.lastError,
+          restartCount: 0
+        };
+      }
+    };
+    store.push(backend);
+    return backend;
+  };
+}

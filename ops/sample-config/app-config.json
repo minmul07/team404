@@ -5,15 +5,16 @@
   },
   "monitor": {
     "scriptPath": "../config/monitor.sh",
+    "backendMode": "auto",
     "restartDelayMs": 2000,
     "movePairWindowMs": 750,
     "targets": [
       {
-        "id": "sandbox",
-        "rootPath": "../../tmp/watch",
+        "id": "manual-1",
+        "rootPath": "/home/minmul-ubuntu/team404/tmp/demo-target",
         "enabled": true,
         "autoQuarantineEnabled": false,
-        "demoAllowed": true
+        "demoAllowed": false
       }
     ]
   },
@@ -22,7 +23,7 @@
   },
   "rules": [],
   "detectionPolicy": {
-    "thresholdWeight": 10,
+    "thresholdWeight": 16.9,
     "weights": {
       "knownExtension": 0.1,
       "unknownExtension": 1,
@@ -35,7 +36,7 @@
       "rename": 1.5
     },
     "weightDecay": {
-      "intervalMs": 500,
+      "intervalMs": 100,
       "amount": 1
     },
     "userAllowedExtensions": [],

@@ -37,7 +37,8 @@ export function createRuntime(config, options = {}) {
   const quarantineService = new QuarantineService({
     eventBus,
     getResponsePolicy: () => ({ ...responsePolicy }),
-    getWatchTargets: () => monitorService.getHealth().targets
+    getWatchTargets: () => monitorService.getHealth().targets,
+    processKiller: options.processKiller
   });
   const monitorService = new MonitorService({
     config,
@@ -163,6 +164,18 @@ export function createRuntime(config, options = {}) {
         fileCount: normalizeDemoFileCount(config.demo?.fileCount)
       };
     },
+    getMonitorSettings() {
+      return {
+        backendMode: normalizeMonitorBackendMode(config.monitor?.backendMode)
+      };
+    },
+    async updateMonitorSettings(nextSettings = {}) {
+      const settings = normalizeMonitorSettings(nextSettings);
+      config.monitor.backendMode = settings.backendMode;
+      await persistMonitorBackendMode(config.meta?.configPath, settings.backendMode);
+      await monitorService.setBackendMode(settings.backendMode);
+      return this.getMonitorSettings();
+    },
     async updateDemoSettings(nextSettings = {}) {
       if (state.demo.status === 'running' || state.demo.status === 'stopping') {
         throw createRuntimeError('Demo settings cannot be changed while demo is running', 409);
@@ -188,14 +201,20 @@ export function createRuntime(config, options = {}) {
 
       const target = monitorHealth.activeTarget;
       const identity = resolveDemoRunIdentity(config);
+      const demoTargetHasQuarantine = hasActiveQuarantineForTarget(
+        quarantineService.getQuarantineJobs(),
+        target.rootPath
+      );
       let worker;
 
       try {
-        resetDemo({
-          ownerUid: identity.runAsUid,
-          ownerGid: identity.runAsGid,
-          fileCount: this.getDemoSettings().fileCount
-        });
+        if (!demoTargetHasQuarantine) {
+          resetDemo({
+            ownerUid: identity.runAsUid,
+            ownerGid: identity.runAsGid,
+            fileCount: this.getDemoSettings().fileCount
+          });
+        }
         worker = demoProcessFactory({
           cwd: config.meta?.projectRoot ?? process.cwd(),
           uid: identity.forkUid,
@@ -312,6 +331,7 @@ export function createRuntime(config, options = {}) {
       });
       incidentStore.clear();
       quarantineService.clearRecords();
+      ruleEngine.resetWeights();
       state.demo = {
         status: 'ready',
         startedAt: null,
@@ -340,6 +360,10 @@ export function createRuntime(config, options = {}) {
         lastFsEventAt: state.lastFsEventAt,
         lastRuleMatchAt: state.lastRuleMatchAt,
         watchEnabled: state.watchEnabled,
+        requestedBackend: monitorHealth.requestedBackend,
+        activeBackend: monitorHealth.activeBackend,
+        fallbackReason: monitorHealth.fallbackReason,
+        pidTrackingAvailable: monitorHealth.pidTrackingAvailable,
         activeMode: monitorHealth.activeMode,
         activeTarget: monitorHealth.activeTarget,
         responsePolicy: this.getResponsePolicy(),
@@ -357,6 +381,10 @@ export function createRuntime(config, options = {}) {
       return {
         health: this.getHealth(),
         watchEnabled: state.watchEnabled,
+        requestedBackend: monitorHealth.requestedBackend,
+        activeBackend: monitorHealth.activeBackend,
+        fallbackReason: monitorHealth.fallbackReason,
+        pidTrackingAvailable: monitorHealth.pidTrackingAvailable,
         activeMode: monitorHealth.activeMode,
         activeTarget: monitorHealth.activeTarget,
         targets: monitorHealth.targets,
@@ -374,6 +402,38 @@ export function createRuntime(config, options = {}) {
       return quarantineService.restore(incidentId);
     }
   };
+}
+
+function normalizeMonitorSettings(settings = {}) {
+  return {
+    backendMode: normalizeMonitorBackendMode(settings.backendMode)
+  };
+}
+
+function normalizeMonitorBackendMode(value) {
+  if (value === 'auditd' || value === 'inotify' || value === 'auto') {
+    return value;
+  }
+
+  if (value === undefined || value === null || value === '') {
+    return 'auto';
+  }
+
+  throw createRuntimeError('monitor.backendMode must be auto, auditd, or inotify', 400);
+}
+
+async function persistMonitorBackendMode(configPath, backendMode) {
+  if (!configPath) {
+    return;
+  }
+
+  const raw = await readFile(configPath, 'utf8');
+  const parsed = JSON.parse(raw);
+  parsed.monitor = {
+    ...parsed.monitor,
+    backendMode
+  };
+  await writeFile(configPath, `${JSON.stringify(parsed, null, 2)}\n`);
 }
 
 function cloneDetectionPolicy(policy) {
@@ -505,7 +565,11 @@ function handleDemoWorkerMessage({ message, state, eventBus, target, worker }) {
       observedAt: now.toISOString(),
       observedTs: now.getTime(),
       monitorTargetId: target.id,
-      monitorRootPath: target.rootPath
+      monitorRootPath: target.rootPath,
+      pid: worker.pid ?? null,
+      comm: 'team404-demo-worker',
+      exe: DEMO_WORKER_PATH,
+      source: 'demo-worker'
     });
     return;
   }
@@ -619,6 +683,18 @@ function stopDemoWorkerForShutdown(state) {
     workerPid: null,
     stopTimer: null
   };
+}
+
+function hasActiveQuarantineForTarget(quarantineJobs, targetRootPath) {
+  if (!targetRootPath) {
+    return false;
+  }
+
+  const resolvedTargetRootPath = path.resolve(targetRootPath);
+  return quarantineJobs.some((job) => {
+    const rootPaths = job.rootPaths ?? [job.rootPath].filter(Boolean);
+    return rootPaths.some((rootPath) => path.resolve(rootPath) === resolvedTargetRootPath);
+  });
 }
 
 function resolveDemoRunIdentity(config) {

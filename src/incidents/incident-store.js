@@ -115,6 +115,7 @@ export class IncidentStore {
         totalObservedEvents: match.eventCount,
         samplePaths: match.samplePaths,
         eventTypes: match.eventTypes ?? [match.eventType].filter(Boolean),
+        suspectProcesses: normalizeSuspectProcesses(match.suspectProcesses),
         matchedRuleIds: [match.ruleId],
         matchedRuleNames: [match.ruleName].filter(Boolean)
       };
@@ -139,6 +140,10 @@ export class IncidentStore {
     currentIncident.eventTypes = [
       ...new Set([...currentIncident.eventTypes, ...(match.eventTypes ?? [match.eventType].filter(Boolean))])
     ];
+    currentIncident.suspectProcesses = mergeSuspectProcesses(
+      currentIncident.suspectProcesses,
+      match.suspectProcesses
+    );
     currentIncident.matchedRuleIds = [...new Set([...currentIncident.matchedRuleIds, match.ruleId])];
     currentIncident.matchedRuleNames = [
       ...new Set([...currentIncident.matchedRuleNames, match.ruleName].filter(Boolean))
@@ -212,6 +217,47 @@ export class IncidentStore {
 
     return incident;
   }
+}
+
+
+function mergeSuspectProcesses(current = [], next = []) {
+  return normalizeSuspectProcesses([...current, ...next]);
+}
+
+function normalizeSuspectProcesses(processes = []) {
+  if (!Array.isArray(processes)) {
+    return [];
+  }
+
+  const seen = new Set();
+  const normalized = [];
+
+  for (const processInfo of processes) {
+    const pid = Number(processInfo?.pid);
+    if (!Number.isInteger(pid) || pid <= 1 || seen.has(pid)) {
+      continue;
+    }
+
+    seen.add(pid);
+    normalized.push({
+      pid,
+      ppid: normalizeOptionalInteger(processInfo.ppid),
+      uid: normalizeOptionalInteger(processInfo.uid),
+      auid: normalizeOptionalInteger(processInfo.auid),
+      comm: processInfo.comm ?? null,
+      exe: processInfo.exe ?? null,
+      source: processInfo.source ?? null,
+      path: processInfo.path ?? null,
+      observedAt: processInfo.observedAt ?? null
+    });
+  }
+
+  return normalized;
+}
+
+function normalizeOptionalInteger(value) {
+  const numberValue = Number(value);
+  return Number.isInteger(numberValue) && numberValue >= 0 ? numberValue : null;
 }
 
 function pickHigherSeverity(currentSeverity = 'high', nextSeverity = 'high') {

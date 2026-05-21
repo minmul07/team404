@@ -5,7 +5,6 @@ import { pathToFileURL } from 'url';
 export const DEMO_TARGET_DIR = 'tmp/demo-target';
 
 const TARGET_DIR = path.resolve(DEMO_TARGET_DIR);
-const BACKUP_FILE = path.resolve('tmp/demo-backup.json');
 const LOG_FILE = path.resolve('tmp/demo-log.jsonl');
 export const DEFAULT_DEMO_FILE_COUNT = 15;
 export const MIN_DEMO_FILE_COUNT = 1;
@@ -33,13 +32,7 @@ function appendDemoLog(line) {
         }
     }
 
-    try {
-        fs.unlinkSync(LOG_FILE);
-    } catch (error) {
-        if (error.code !== 'ENOENT') {
-            throw error;
-        }
-    }
+    resetSupportFile(LOG_FILE);
     fs.appendFileSync(LOG_FILE, line);
 }
 
@@ -54,11 +47,8 @@ export async function startAttack(onEvent = null, options = {}) {
 
     writeLog({ event: 'demo_started', targetDir: TARGET_DIR });
 
-    const backup = {};
-
     for (let i = 1; i <= fileCount; i++) {
         if (options.signal?.aborted) {
-            fs.writeFileSync(BACKUP_FILE, JSON.stringify(backup, null, 2));
             writeLog({ event: 'demo_aborted', targetDir: TARGET_DIR });
             return { status: 'aborted', targetDir: TARGET_DIR };
         }
@@ -67,11 +57,10 @@ export async function startAttack(onEvent = null, options = {}) {
         const lockedPath = filePath + '.demo.locked';
 
         try {
+            assertDemoWriteAllowed(filePath);
             const originalContent = fs.existsSync(filePath)
                 ? fs.readFileSync(filePath, 'utf8')
                 : `original content ${i}`;
-
-            backup[`file_${i}.txt`] = originalContent;
 
             const encoded = Buffer.from(originalContent).toString('base64');
             fs.writeFileSync(filePath, encoded);
@@ -99,7 +88,6 @@ export async function startAttack(onEvent = null, options = {}) {
                 errorMessage: error?.message ?? null
             });
 
-            fs.writeFileSync(BACKUP_FILE, JSON.stringify(backup, null, 2));
             return {
                 status: 'blocked',
                 targetDir: TARGET_DIR,
@@ -111,17 +99,16 @@ export async function startAttack(onEvent = null, options = {}) {
         }
     }
 
-    fs.writeFileSync(BACKUP_FILE, JSON.stringify(backup, null, 2));
     writeLog({ event: 'demo_completed', totalFiles: fileCount });
     return { status: 'completed', targetDir: TARGET_DIR, totalFiles: fileCount };
 }
 
 export function restoreDemo() {
     restoreDemoTargetPermissions();
-    return restoreDemoEncryption(TARGET_DIR, { removeBackup: true });
+    return restoreDemoEncryption(TARGET_DIR);
 }
 
-export function restoreDemoEncryption(rootPath = TARGET_DIR, options = {}) {
+export function restoreDemoEncryption(rootPath = TARGET_DIR) {
     const resolvedRootPath = path.resolve(rootPath);
 
     if (!fs.existsSync(resolvedRootPath)) {
@@ -152,7 +139,6 @@ export function restoreDemoEncryption(rootPath = TARGET_DIR, options = {}) {
         return originalPath;
     });
 
-    if (options.removeBackup && fs.existsSync(BACKUP_FILE)) fs.unlinkSync(BACKUP_FILE);
     writeLog({ event: 'restore_completed', targetDir: resolvedRootPath, totalFiles: restoredFiles.length });
 
     return {
@@ -169,7 +155,7 @@ export function resetDemoWithOptions(options = {}) {
     const fileCount = normalizeDemoFileCount(options.fileCount);
     const owner = normalizeOwner(options);
     restoreDemoTargetPermissions();
-    fs.rmSync(TARGET_DIR, { recursive: true, force: true });
+    resetDemoTargetDirectory();
     fs.mkdirSync(TARGET_DIR, { recursive: true, mode: DEMO_DIR_MODE });
 
     for (let i = 1; i <= fileCount; i++) {
@@ -180,8 +166,7 @@ export function resetDemoWithOptions(options = {}) {
     restoreDemoTargetPermissions();
     applyDemoOwnership(TARGET_DIR, owner);
 
-    if (fs.existsSync(BACKUP_FILE)) fs.unlinkSync(BACKUP_FILE);
-    if (fs.existsSync(LOG_FILE)) fs.unlinkSync(LOG_FILE);
+    if (fs.existsSync(LOG_FILE)) resetSupportFile(LOG_FILE);
     writeLog({ event: 'demo_ready', targetDir: TARGET_DIR, totalFiles: fileCount });
     applyDemoSupportFileOwnership(owner);
 
@@ -190,6 +175,46 @@ export function resetDemoWithOptions(options = {}) {
         targetDir: TARGET_DIR,
         totalFiles: fileCount
     };
+}
+
+
+
+function resetSupportFile(filePath) {
+    try {
+        fs.unlinkSync(filePath);
+        return;
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            return;
+        }
+
+        if (error.code !== 'EACCES' && error.code !== 'EPERM') {
+            throw error;
+        }
+    }
+
+    try {
+        fs.chmodSync(filePath, DEMO_FILE_MODE);
+    } catch {
+        // 다음 write에서 실제 접근 가능 여부를 판단한다.
+    }
+    fs.writeFileSync(filePath, '');
+}
+
+function resetDemoTargetDirectory() {
+    try {
+        fs.rmSync(TARGET_DIR, { recursive: true, force: true });
+        return;
+    } catch (error) {
+        if (error.code !== 'EACCES' || !fs.existsSync(TARGET_DIR) || !fs.statSync(TARGET_DIR).isDirectory()) {
+            throw error;
+        }
+    }
+
+    fs.chmodSync(TARGET_DIR, DEMO_DIR_MODE);
+    for (const entry of fs.readdirSync(TARGET_DIR)) {
+        fs.rmSync(path.join(TARGET_DIR, entry), { recursive: true, force: true });
+    }
 }
 
 export function normalizeDemoFileCount(value) {
@@ -236,7 +261,7 @@ function applyDemoSupportFileOwnership(owner) {
         return;
     }
 
-    for (const filePath of [BACKUP_FILE, LOG_FILE]) {
+    for (const filePath of [LOG_FILE]) {
         if (!fs.existsSync(filePath)) {
             continue;
         }
@@ -318,6 +343,26 @@ function findLockedFiles(rootPath) {
     }
 
     return lockedFiles;
+}
+
+function assertDemoWriteAllowed(filePath) {
+    const parentPath = path.dirname(filePath);
+    assertModeHasWriteBit(parentPath);
+
+    if (fs.existsSync(filePath)) {
+        assertModeHasWriteBit(filePath);
+    }
+}
+
+function assertModeHasWriteBit(filePath) {
+    const mode = fs.statSync(filePath).mode & 0o777;
+    if ((mode & 0o222) !== 0) {
+        return;
+    }
+
+    const error = new Error(`EACCES: permission denied, open '${filePath}'`);
+    error.code = 'EACCES';
+    throw error;
 }
 
 function formatBlockReason(error, filePath) {
