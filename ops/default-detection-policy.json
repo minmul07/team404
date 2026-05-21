@@ -1,0 +1,47 @@
+{
+  "weights": {
+    "knownExtension": 0.1,
+    "unknownExtension": 1,
+    "noExtension": 1,
+    "suspiciousExtension": 2
+  },
+  "eventMultipliers": {
+    "create": 1,
+    "modify": 1,
+    "rename": 1.5
+  },
+  "userAllowedExtensions": [],
+  "suspiciousExtensions": [
+    "locked",
+    "encrypted",
+    "warning",
+    "decrypt",
+    "ransom",
+    "recover",
+    "pay",
+    "wncry",
+    "wcry",
+    "locky",
+    "odin",
+    "djvu",
+    "rumba",
+    "radman",
+    "gero",
+    "xtbl",
+    "crysis",
+    "crypt",
+    "lock",
+    "crypted",
+    "dharma",
+    "wallet",
+    "onion",
+    "faust",
+    "conti",
+    "play",
+    "hive",
+    "akira",
+    "akiranew",
+    "lockbit",
+    "snatch"
+  ]
+}

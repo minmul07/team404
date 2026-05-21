@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { DETECTABLE_FILE_EVENT_TYPES } from '../contracts/event-names.js';
+import { normalizeDetectionPolicy } from './detection-policy.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,6 +22,7 @@ export async function loadAppConfig(options = {}) {
   const monitorTargets = normalizeMonitorTargets(parsed.monitor?.targets, configDir);
   const normalizedRules = normalizeRules(parsed.rules);
   const customExtensionWeights = normalizeCustomExtensionWeights(parsed.customExtensionWeights);
+  const detectionPolicy = normalizeDetectionPolicy(parsed.detectionPolicy);
 
   const config = {
     server: {
@@ -36,6 +38,7 @@ export async function loadAppConfig(options = {}) {
     rules: {
       definitions: normalizedRules
     },
+    detectionPolicy,
     customExtensionWeights,
     meta: {
       configPath: resolvedConfigPath,

@@ -2,77 +2,82 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { normalizeDetectionPolicy, normalizeExtension } from '../shared/config/detection-policy.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const EXTENSION_CATEGORIES_PATH = path.join(PROJECT_ROOT, 'ops/common-file-extensions.json');
 
-const CATEGORY_WEIGHTS = Object.freeze({
-  code: 0.1,
-  text: 0.1,
-  web: 0.1,
-  image: 0.1,
-  audio: 0.1,
-  video: 0.1,
-  sheet: 0.1,
-  slide: 0.1,
-  book: 0.1,
-  '3D': 0.1,
-  font: 0.1,
-  archive: 0.3,
-  exec: 0.5,
-  unknown: 1.0
-});
-
-const DEFAULT_UNKNOWN_WEIGHT = CATEGORY_WEIGHTS.unknown;
-
 const extensionCategories = JSON.parse(readFileSync(EXTENSION_CATEGORIES_PATH, 'utf8'));
-const defaultWeights = buildDefaultExtensionWeights(extensionCategories);
+const defaultKnownExtensions = buildDefaultKnownExtensions(extensionCategories);
 
-let activeExtensionWeights = new Map(defaultWeights);
+let activeDetectionPolicy = normalizeDetectionPolicy();
+let activeKnownExtensions = new Set([
+  ...defaultKnownExtensions,
+  ...activeDetectionPolicy.userAllowedExtensions
+]);
+let activeSuspiciousExtensions = new Set(activeDetectionPolicy.suspiciousExtensions);
+let activeCustomExtensionWeights = new Map();
 
 export function loadExtensionWeights(config = {}) {
+  activeDetectionPolicy = normalizeDetectionPolicy(config.detectionPolicy ?? config);
   const customExtensionWeights = normalizeCustomExtensionWeights(config.customExtensionWeights);
-  activeExtensionWeights = new Map(defaultWeights);
+  activeKnownExtensions = new Set([
+    ...defaultKnownExtensions,
+    ...activeDetectionPolicy.userAllowedExtensions
+  ]);
+  activeSuspiciousExtensions = new Set(activeDetectionPolicy.suspiciousExtensions);
+  activeCustomExtensionWeights = customExtensionWeights;
 
-  for (const [extension, weight] of customExtensionWeights) {
-    activeExtensionWeights.set(extension, weight);
-  }
-
-  return Object.fromEntries(activeExtensionWeights);
+  return {
+    detectionPolicy: cloneDetectionPolicy(activeDetectionPolicy),
+    customExtensionWeights: Object.fromEntries(activeCustomExtensionWeights)
+  };
 }
 
 export function getExtensionWeight(ext) {
   const normalizedExtension = normalizeExtension(ext);
 
   if (!normalizedExtension) {
-    return DEFAULT_UNKNOWN_WEIGHT;
+    return activeDetectionPolicy.weights.noExtension;
   }
 
-  return activeExtensionWeights.get(normalizedExtension) ?? DEFAULT_UNKNOWN_WEIGHT;
+  if (activeSuspiciousExtensions.has(normalizedExtension)) {
+    return activeDetectionPolicy.weights.suspiciousExtension;
+  }
+
+  if (activeCustomExtensionWeights.has(normalizedExtension)) {
+    return activeCustomExtensionWeights.get(normalizedExtension);
+  }
+
+  if (activeKnownExtensions.has(normalizedExtension)) {
+    return activeDetectionPolicy.weights.knownExtension;
+  }
+
+  return activeDetectionPolicy.weights.unknownExtension;
 }
 
-function buildDefaultExtensionWeights(categories) {
-  const weights = new Map();
+export function getEventMultiplier(eventType) {
+  return activeDetectionPolicy.eventMultipliers[eventType] ?? 1;
+}
 
-  for (const [category, extensions] of Object.entries(categories)) {
-    const categoryWeight = CATEGORY_WEIGHTS[category] ?? DEFAULT_UNKNOWN_WEIGHT;
+function buildDefaultKnownExtensions(categories) {
+  const extensions = new Set();
 
-    for (const extension of extensions) {
+  for (const categoryExtensions of Object.values(categories)) {
+    for (const extension of categoryExtensions) {
       const normalizedExtension = normalizeExtension(extension);
 
       if (!normalizedExtension) {
         continue;
       }
 
-      const existingWeight = weights.get(normalizedExtension);
-      if (existingWeight === undefined || categoryWeight < existingWeight) {
-        weights.set(normalizedExtension, categoryWeight);
-      }
+      extensions.add(normalizedExtension);
     }
   }
 
-  return weights;
+  return extensions;
 }
 
 function normalizeCustomExtensionWeights(rawCustomExtensionWeights) {
@@ -102,15 +107,11 @@ function normalizeCustomExtensionWeights(rawCustomExtensionWeights) {
   return weights;
 }
 
-function normalizeExtension(ext) {
-  if (typeof ext !== 'string') {
-    return '';
-  }
-
-  const trimmed = ext.trim();
-  if (!trimmed) {
-    return '';
-  }
-
-  return trimmed.startsWith('.') ? trimmed.slice(1).toLowerCase() : trimmed.toLowerCase();
+function cloneDetectionPolicy(policy) {
+  return {
+    weights: { ...policy.weights },
+    eventMultipliers: { ...policy.eventMultipliers },
+    userAllowedExtensions: [...policy.userAllowedExtensions],
+    suspiciousExtensions: [...policy.suspiciousExtensions]
+  };
 }

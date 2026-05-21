@@ -18,6 +18,29 @@
     ]
   },
   "rules": [],
+  "detectionPolicy": {
+    "weights": {
+      "knownExtension": 0.1,
+      "unknownExtension": 1,
+      "noExtension": 1,
+      "suspiciousExtension": 2
+    },
+    "eventMultipliers": {
+      "create": 1,
+      "modify": 1,
+      "rename": 1.5
+    },
+    "userAllowedExtensions": [],
+    "suspiciousExtensions": [
+      "locked",
+      "encrypted",
+      "warning",
+      "decrypt",
+      "ransom",
+      "recover",
+      "pay"
+    ]
+  },
   "customExtensionWeights": {
     "md": 0.05,
     "zip": 0.2,

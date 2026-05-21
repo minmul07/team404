@@ -64,6 +64,45 @@ test('loadAppConfig keeps rule arrays without legacy threshold normalization', a
   }
 });
 
+test('loadAppConfig normalizes detection policy settings', async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'team404-config-'));
+
+  try {
+    const configPath = await writeConfig(tempDir, {
+      monitor: {
+        scriptPath: '../config/monitor.sh',
+        restartDelayMs: 1000,
+        movePairWindowMs: 500,
+        targets: [{ id: 'input-target', rootPath: './configured-watch' }]
+      },
+      detectionPolicy: {
+        weights: {
+          knownExtension: 0.2,
+          unknownExtension: 1.4,
+          noExtension: 1.8,
+          suspiciousExtension: 2.6
+        },
+        eventMultipliers: {
+          create: 0.9,
+          modify: 1.1,
+          rename: 1.7
+        },
+        userAllowedExtensions: ['.backup', 'BACKUP', 'log'],
+        suspiciousExtensions: ['LOCKED']
+      }
+    });
+
+    const config = await loadAppConfig({ configPath });
+
+    assert.equal(config.detectionPolicy.weights.unknownExtension, 1.4);
+    assert.equal(config.detectionPolicy.eventMultipliers.rename, 1.7);
+    assert.deepEqual(config.detectionPolicy.userAllowedExtensions, ['backup', 'log']);
+    assert.deepEqual(config.detectionPolicy.suspiciousExtensions, ['locked']);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 async function writeConfig(tempDir, overrides) {
   const configPath = path.join(tempDir, 'app-config.json');
   const payload = {

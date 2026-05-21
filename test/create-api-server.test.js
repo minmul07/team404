@@ -215,6 +215,120 @@ test('handleApiRequest rejects invalid response policy settings', async () => {
   assert.equal(response.payload.message, 'shutdownSystem must be boolean');
 });
 
+test('handleApiRequest returns detection policy settings', async () => {
+  const runtime = createRuntimeDouble();
+  const response = createResponseDouble();
+
+  await handleApiRequest({
+    runtime,
+    request: {
+      method: 'GET',
+      url: API_ROUTES.DETECTION_POLICY,
+      headers: { host: 'localhost' }
+    },
+    response
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.payload.weights.knownExtension, 0.1);
+  assert.equal(response.payload.eventMultipliers.rename, 1.5);
+});
+
+test('handleApiRequest updates detection policy settings', async () => {
+  const runtime = createRuntimeDouble();
+  const response = createResponseDouble();
+
+  await handleApiRequest({
+    runtime,
+    request: createJsonRequest({
+      method: 'PUT',
+      url: API_ROUTES.DETECTION_POLICY,
+      body: {
+        weights: {
+          knownExtension: 0.2,
+          unknownExtension: 1.2,
+          noExtension: 1.4,
+          suspiciousExtension: 2.4
+        },
+        eventMultipliers: {
+          create: 0.8,
+          modify: 1.1,
+          rename: 1.7
+        },
+        userAllowedExtensions: ['.backup', 'BACKUP'],
+        suspiciousExtensions: ['locked']
+      }
+    }),
+    response
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(runtime.updateDetectionPolicyCalls.length, 1);
+  assert.deepEqual(response.payload.userAllowedExtensions, ['backup']);
+  assert.equal(response.payload.weights.suspiciousExtension, 2.4);
+});
+
+test('handleApiRequest resets detection policy settings', async () => {
+  const runtime = createRuntimeDouble();
+  const response = createResponseDouble();
+
+  runtime.detectionPolicy = {
+    weights: {
+      knownExtension: 0.9,
+      unknownExtension: 1.9,
+      noExtension: 1.9,
+      suspiciousExtension: 3.9
+    },
+    eventMultipliers: {
+      create: 2,
+      modify: 2,
+      rename: 2
+    },
+    userAllowedExtensions: ['custom'],
+    suspiciousExtensions: ['customlocked']
+  };
+
+  await handleApiRequest({
+    runtime,
+    request: {
+      method: 'POST',
+      url: API_ROUTES.DETECTION_POLICY_RESET,
+      headers: { host: 'localhost' }
+    },
+    response
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(runtime.resetDetectionPolicyCalls, 1);
+  assert.equal(response.payload.weights.knownExtension, 0.1);
+  assert.deepEqual(response.payload.userAllowedExtensions, []);
+});
+
+test('handleApiRequest rejects invalid detection policy settings', async () => {
+  const runtime = createRuntimeDouble();
+  const response = createResponseDouble();
+
+  await handleApiRequest({
+    runtime,
+    request: createJsonRequest({
+      method: 'PUT',
+      url: API_ROUTES.DETECTION_POLICY,
+      body: {
+        weights: {
+          knownExtension: -1
+        }
+      }
+    }),
+    response
+  }).catch((error) => {
+    response.writeHead(error.statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
+    response.end(JSON.stringify({ message: error.message }));
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.payload.message, 'detectionPolicy.weights.knownExtension must be a non-negative number');
+});
+
 test('createApiServer upgrades dashboard WebSocket and broadcasts runtime events', async () => {
   const runtime = createRuntimeDouble();
   const server = createApiServer({ runtime });
@@ -284,10 +398,27 @@ function createRuntimeDouble() {
     resetDemoCalls: 0,
     setTargetPathCalls: [],
     updateResponsePolicyCalls: [],
+    updateDetectionPolicyCalls: [],
+    resetDetectionPolicyCalls: 0,
     responsePolicy: {
       lockDirectoryPermissions: true,
       killSuspectProcesses: false,
       shutdownSystem: false
+    },
+    detectionPolicy: {
+      weights: {
+        knownExtension: 0.1,
+        unknownExtension: 1,
+        noExtension: 1,
+        suspiciousExtension: 2
+      },
+      eventMultipliers: {
+        create: 1,
+        modify: 1,
+        rename: 1.5
+      },
+      userAllowedExtensions: [],
+      suspiciousExtensions: ['locked']
     },
     incidentStore: {
       getIncidents() {
@@ -311,11 +442,20 @@ function createRuntimeDouble() {
         activeTarget: {
           rootPath: '/tmp/configured-watch'
         },
-        responsePolicy: this.getResponsePolicy()
+        responsePolicy: this.getResponsePolicy(),
+        detectionPolicy: this.getDetectionPolicy()
       };
     },
     getResponsePolicy() {
       return { ...this.responsePolicy };
+    },
+    getDetectionPolicy() {
+      return {
+        weights: { ...this.detectionPolicy.weights },
+        eventMultipliers: { ...this.detectionPolicy.eventMultipliers },
+        userAllowedExtensions: [...this.detectionPolicy.userAllowedExtensions],
+        suspiciousExtensions: [...this.detectionPolicy.suspiciousExtensions]
+      };
     },
     updateResponsePolicy(policy) {
       this.updateResponsePolicyCalls.push(policy);
@@ -339,6 +479,35 @@ function createRuntimeDouble() {
         };
       }
       return this.getResponsePolicy();
+    },
+    async updateDetectionPolicy(policy) {
+      this.updateDetectionPolicyCalls.push(policy);
+      this.detectionPolicy = {
+        weights: { ...policy.weights },
+        eventMultipliers: { ...policy.eventMultipliers },
+        userAllowedExtensions: [...policy.userAllowedExtensions],
+        suspiciousExtensions: [...policy.suspiciousExtensions]
+      };
+      return this.getDetectionPolicy();
+    },
+    async resetDetectionPolicy() {
+      this.resetDetectionPolicyCalls += 1;
+      this.detectionPolicy = {
+        weights: {
+          knownExtension: 0.1,
+          unknownExtension: 1,
+          noExtension: 1,
+          suspiciousExtension: 2
+        },
+        eventMultipliers: {
+          create: 1,
+          modify: 1,
+          rename: 1.5
+        },
+        userAllowedExtensions: [],
+        suspiciousExtensions: ['locked', 'encrypted', 'warning', 'decrypt', 'ransom', 'recover', 'pay']
+      };
+      return this.getDetectionPolicy();
     },
     async enableDemoMode() {
       this.enableDemoModeCalls += 1;

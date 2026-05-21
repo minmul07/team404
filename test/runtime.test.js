@@ -106,6 +106,89 @@ test('createRuntime treats shutdown response policy as the highest cumulative st
   });
 });
 
+test('createRuntime updates detection policy and persists it when configPath exists', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'team404-runtime-config-'));
+  const configPath = path.join(tempDir, 'app-config.json');
+
+  try {
+    await fs.writeFile(configPath, JSON.stringify({
+      server: {
+        host: '127.0.0.1',
+        port: 3000
+      },
+      detectionPolicy: {
+        userAllowedExtensions: ['old']
+      }
+    }, null, 2));
+
+    const config = createConfig();
+    config.meta.configPath = configPath;
+    const runtime = createRuntime(config);
+
+    const policy = await runtime.updateDetectionPolicy({
+      weights: {
+        knownExtension: 0.2,
+        unknownExtension: 1.3,
+        noExtension: 1.4,
+        suspiciousExtension: 2.5
+      },
+      eventMultipliers: {
+        create: 0.8,
+        modify: 1.1,
+        rename: 1.6
+      },
+      userAllowedExtensions: ['.backup', 'BACKUP'],
+      suspiciousExtensions: ['locked']
+    });
+
+    assert.deepEqual(policy.userAllowedExtensions, ['backup']);
+    assert.equal(runtime.getHealth().detectionPolicy.weights.knownExtension, 0.2);
+
+    const persisted = JSON.parse(await fs.readFile(configPath, 'utf8'));
+    assert.deepEqual(persisted.detectionPolicy.userAllowedExtensions, ['backup']);
+    assert.equal(persisted.detectionPolicy.eventMultipliers.rename, 1.6);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('createRuntime resets detection policy to default and persists it', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'team404-runtime-config-'));
+  const configPath = path.join(tempDir, 'app-config.json');
+
+  try {
+    await fs.writeFile(configPath, JSON.stringify({
+      detectionPolicy: {
+        weights: {
+          knownExtension: 0.9
+        },
+        userAllowedExtensions: ['custom']
+      }
+    }, null, 2));
+
+    const config = createConfig();
+    config.meta.configPath = configPath;
+    config.detectionPolicy = {
+      weights: {
+        knownExtension: 0.9
+      },
+      userAllowedExtensions: ['custom']
+    };
+    const runtime = createRuntime(config);
+
+    const policy = await runtime.resetDetectionPolicy();
+
+    assert.equal(policy.weights.knownExtension, 0.1);
+    assert.deepEqual(policy.userAllowedExtensions, []);
+
+    const persisted = JSON.parse(await fs.readFile(configPath, 'utf8'));
+    assert.equal(persisted.detectionPolicy.weights.knownExtension, 0.1);
+    assert.deepEqual(persisted.detectionPolicy.userAllowedExtensions, []);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('runtime snapshot includes recursive file count for active watch target', async () => {
   const rootPath = await fs.mkdtemp(path.join(os.tmpdir(), 'team404-watch-'));
 

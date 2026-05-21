@@ -5,14 +5,15 @@ import { createEventBus } from '../src/shared/utils/create-event-bus.js';
 import { RuleEngine } from '../src/rules/rule-engine.js';
 import { EVENT_NAMES } from '../src/shared/contracts/event-names.js';
 
-function createRuleEngine() {
+function createRuleEngine(configOverrides = {}) {
   const eventBus = createEventBus();
   const ruleEngine = new RuleEngine({
     eventBus,
     config: {
       rules: {
         definitions: []
-      }
+      },
+      ...configOverrides
     }
   });
 
@@ -42,7 +43,7 @@ function emitFsEvent(
 test('RuleEngine emits critical extension weight burst after one target exceeds bucket weight', () => {
   const { eventBus, ruleEngine, matches } = createRuleEngine();
 
-  for (let index = 1; index <= 11; index += 1) {
+  for (let index = 1; index <= 6; index += 1) {
     emitFsEvent(eventBus, {
       id: String(index),
       path: `/tmp/watch/file-${index}.locked`
@@ -53,12 +54,47 @@ test('RuleEngine emits critical extension weight burst after one target exceeds 
   assert.equal(matches[0].ruleId, 'extension-weight-burst');
   assert.equal(matches[0].severity, 'critical');
   assert.equal(matches[0].autoQuarantine, true);
-  assert.equal(matches[0].eventCount, 11);
-  assert.equal(matches[0].totalWeight, 11);
+  assert.equal(matches[0].eventCount, 6);
+  assert.equal(matches[0].totalWeight, 12);
   assert.equal(matches[0].bucketSecond, 1);
   assert.equal(matches[0].bucketMs, 1000);
   assert.deepEqual(matches[0].eventTypes, ['modify']);
-  assert.equal(matches[0].samplePaths.length, 10);
+  assert.equal(matches[0].samplePaths.length, 6);
+
+  ruleEngine.stop();
+});
+
+test('RuleEngine applies configured event multipliers to extension weights', () => {
+  const { eventBus, ruleEngine, matches } = createRuleEngine({
+    detectionPolicy: {
+      weights: {
+        knownExtension: 0.1,
+        unknownExtension: 1,
+        noExtension: 1,
+        suspiciousExtension: 2
+      },
+      eventMultipliers: {
+        create: 1,
+        modify: 1,
+        rename: 2
+      },
+      userAllowedExtensions: [],
+      suspiciousExtensions: ['locked']
+    }
+  });
+
+  for (let index = 1; index <= 3; index += 1) {
+    emitFsEvent(eventBus, {
+      id: `rename-${index}`,
+      type: 'rename',
+      path: `/tmp/watch/file-${index}.locked`
+    });
+  }
+
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].eventCount, 3);
+  assert.equal(matches[0].totalWeight, 12);
+  assert.deepEqual(matches[0].eventTypes, ['rename']);
 
   ruleEngine.stop();
 });
@@ -66,7 +102,7 @@ test('RuleEngine emits critical extension weight burst after one target exceeds 
 test('RuleEngine counts create modify and rename events but ignores delete events', () => {
   const { eventBus, ruleEngine, matches } = createRuleEngine();
 
-  for (let index = 1; index <= 4; index += 1) {
+  for (let index = 1; index <= 3; index += 1) {
     emitFsEvent(eventBus, { id: `create-${index}`, type: 'create', path: `/tmp/watch/c-${index}.unknown` });
     emitFsEvent(eventBus, { id: `delete-${index}`, type: 'delete', path: `/tmp/watch/d-${index}.unknown` });
     emitFsEvent(eventBus, { id: `rename-${index}`, type: 'rename', path: `/tmp/watch/r-${index}.unknown` });
@@ -80,7 +116,7 @@ test('RuleEngine counts create modify and rename events but ignores delete event
   emitFsEvent(eventBus, { id: 'modify-3', type: 'modify', path: '/tmp/watch/m-3.unknown' });
 
   assert.equal(matches.length, 1);
-  assert.equal(matches[0].eventCount, 11);
+  assert.equal(matches[0].eventCount, 9);
   assert.deepEqual(matches[0].eventTypes, ['create', 'rename', 'modify']);
 
   ruleEngine.stop();

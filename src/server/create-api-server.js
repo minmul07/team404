@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { API_ROUTES, EVENT_NAMES } from '../shared/contracts/event-names.js';
+import { normalizeDetectionPolicy } from '../shared/config/detection-policy.js';
 
 const PORT = 3000;
 const HOST = '0.0.0.0';
@@ -79,6 +80,20 @@ export async function handleApiRequest({ runtime, request, response }) {
     const payload = await readJsonBody(request);
     validateResponsePolicyPayload(payload);
     return writeJson(response, 200, normalizeResponsePolicy(runtime.updateResponsePolicy(payload)));
+  }
+
+  if (request.method === 'GET' && url.pathname === API_ROUTES.DETECTION_POLICY) {
+    return writeJson(response, 200, normalizeDetectionPolicy(runtime.getDetectionPolicy?.()));
+  }
+
+  if (request.method === 'PUT' && url.pathname === API_ROUTES.DETECTION_POLICY) {
+    const payload = await readJsonBody(request);
+    const policy = validateDetectionPolicyPayload(payload);
+    return writeJson(response, 200, normalizeDetectionPolicy(await runtime.updateDetectionPolicy(policy)));
+  }
+
+  if (request.method === 'POST' && url.pathname === API_ROUTES.DETECTION_POLICY_RESET) {
+    return writeJson(response, 200, normalizeDetectionPolicy(await runtime.resetDetectionPolicy()));
   }
 
   if (request.method === 'POST' && url.pathname === API_ROUTES.DEMO_START) {
@@ -200,10 +215,19 @@ function normalizeSnapshot(snapshot) {
     ...rest,
     watchEnabled: Boolean(rest.watchEnabled),
     responsePolicy: normalizeResponsePolicy(rest.responsePolicy),
+    detectionPolicy: normalizeDetectionPolicy(rest.detectionPolicy),
     quarantineJobs: Array.isArray(rest.quarantineJobs)
       ? rest.quarantineJobs.map((job) => ({ ...job }))
       : []
   };
+}
+
+function validateDetectionPolicyPayload(payload) {
+  try {
+    return normalizeDetectionPolicy(payload);
+  } catch (error) {
+    throw createBadRequest(error.message);
+  }
 }
 
 function normalizeResponsePolicy(policy = {}) {

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { createEventBus } from '../shared/utils/create-event-bus.js';
@@ -8,6 +9,7 @@ import { RuleEngine } from '../rules/rule-engine.js';
 import { QuarantineService } from '../isolation/quarantine-service.js';
 import { resetDemo, startAttack } from '../simulator/demo.js';
 import { EVENT_NAMES } from '../shared/contracts/event-names.js';
+import { getDefaultDetectionPolicy, normalizeDetectionPolicy } from '../shared/config/detection-policy.js';
 
 export const DEFAULT_RESPONSE_POLICY = Object.freeze({
   lockDirectoryPermissions: true,
@@ -21,6 +23,9 @@ export function createRuntime(config, options = {}) {
   const ruleEngine = new RuleEngine({ eventBus, config });
   const responsePolicy = normalizeResponsePolicy(
     options.responsePolicy ?? config.responsePolicy
+  );
+  const detectionPolicy = normalizeDetectionPolicy(
+    options.detectionPolicy ?? config.detectionPolicy
   );
   const quarantineService = new QuarantineService({
     eventBus,
@@ -109,12 +114,26 @@ export function createRuntime(config, options = {}) {
     getResponsePolicy() {
       return { ...responsePolicy };
     },
+    getDetectionPolicy() {
+      return cloneDetectionPolicy(detectionPolicy);
+    },
     updateResponsePolicy(nextPolicy = {}) {
       const normalizedPolicy = normalizeResponsePolicy(nextPolicy);
       responsePolicy.lockDirectoryPermissions = normalizedPolicy.lockDirectoryPermissions;
       responsePolicy.killSuspectProcesses = normalizedPolicy.killSuspectProcesses;
       responsePolicy.shutdownSystem = normalizedPolicy.shutdownSystem;
       return this.getResponsePolicy();
+    },
+    async updateDetectionPolicy(nextPolicy = {}) {
+      const normalizedPolicy = normalizeDetectionPolicy(nextPolicy);
+      applyDetectionPolicy(detectionPolicy, normalizedPolicy);
+      config.detectionPolicy = cloneDetectionPolicy(detectionPolicy);
+      ruleEngine.updateDetectionPolicy(config.detectionPolicy);
+      await persistConfigSection(config.meta?.configPath, 'detectionPolicy', config.detectionPolicy);
+      return this.getDetectionPolicy();
+    },
+    async resetDetectionPolicy() {
+      return this.updateDetectionPolicy(getDefaultDetectionPolicy());
     },
     async startDemo() {
       const monitorHealth = monitorService.getHealth();
@@ -222,6 +241,7 @@ export function createRuntime(config, options = {}) {
         activeMode: monitorHealth.activeMode,
         activeTarget: monitorHealth.activeTarget,
         responsePolicy: this.getResponsePolicy(),
+        detectionPolicy: this.getDetectionPolicy(),
         demo: toDemoSnapshot(state.demo),
         monitor: monitorHealth,
         rules: ruleEngine.getState(),
@@ -237,6 +257,7 @@ export function createRuntime(config, options = {}) {
         activeMode: monitorHealth.activeMode,
         activeTarget: monitorHealth.activeTarget,
         responsePolicy: this.getResponsePolicy(),
+        detectionPolicy: this.getDetectionPolicy(),
         demo: toDemoSnapshot(state.demo),
         watchedFileCount,
         incidents: incidentStore.getIncidents(),
@@ -248,6 +269,33 @@ export function createRuntime(config, options = {}) {
       return quarantineService.restore(incidentId);
     }
   };
+}
+
+function cloneDetectionPolicy(policy) {
+  return {
+    weights: { ...policy.weights },
+    eventMultipliers: { ...policy.eventMultipliers },
+    userAllowedExtensions: [...policy.userAllowedExtensions],
+    suspiciousExtensions: [...policy.suspiciousExtensions]
+  };
+}
+
+function applyDetectionPolicy(target, source) {
+  target.weights = { ...source.weights };
+  target.eventMultipliers = { ...source.eventMultipliers };
+  target.userAllowedExtensions = [...source.userAllowedExtensions];
+  target.suspiciousExtensions = [...source.suspiciousExtensions];
+}
+
+async function persistConfigSection(configPath, key, value) {
+  if (!configPath) {
+    return;
+  }
+
+  const raw = await readFile(configPath, 'utf8');
+  const parsed = JSON.parse(raw);
+  parsed[key] = value;
+  await writeFile(configPath, `${JSON.stringify(parsed, null, 2)}\n`);
 }
 
 export function normalizeResponsePolicy(policy = {}) {

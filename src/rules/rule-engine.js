@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 
 import { EVENT_NAMES, FILE_EVENT_TYPES } from '../shared/contracts/event-names.js';
-import { getExtensionWeight, loadExtensionWeights } from './extension-weight-loader.js';
+import { getEventMultiplier, getExtensionWeight, loadExtensionWeights } from './extension-weight-loader.js';
 
 const BURST_RULE_ID = 'extension-weight-burst';
 const BURST_THRESHOLD = 10;
@@ -15,10 +15,12 @@ const DETECTABLE_EVENT_TYPES = new Set([
 export class RuleEngine {
   constructor({ eventBus, config }) {
     this.eventBus = eventBus;
+    this.config = config;
     this.bucketsByTargetSecond = new Map();
     this.lastMatchAt = null;
+    this.activeRuleSettings = null;
 
-    loadExtensionWeights(config.rules ?? {});
+    this.updateDetectionPolicy(config.detectionPolicy);
 
     this.handleFsEvent = this.handleFsEvent.bind(this);
     this.eventBus.on(EVENT_NAMES.FS_EVENT, this.handleFsEvent);
@@ -31,6 +33,7 @@ export class RuleEngine {
   getState() {
     return {
       activeRuleWindows: this.bucketsByTargetSecond.size,
+      detectionPolicy: this.activeRuleSettings?.detectionPolicy ?? null,
       configuredRules: [
         {
           ruleId: BURST_RULE_ID,
@@ -45,6 +48,13 @@ export class RuleEngine {
     };
   }
 
+  updateDetectionPolicy(detectionPolicy) {
+    this.activeRuleSettings = loadExtensionWeights({
+      detectionPolicy,
+      customExtensionWeights: this.config.customExtensionWeights
+    });
+  }
+
   handleFsEvent(event) {
     if (!DETECTABLE_EVENT_TYPES.has(event.type)) {
       return;
@@ -55,7 +65,7 @@ export class RuleEngine {
     const targetKey = event.monitorTargetId ?? event.monitorRootPath ?? 'unknown';
     const bucketKey = `${targetKey}:${bucketSecond}`;
     const extension = parseExtension(event.path);
-    const weight = getExtensionWeight(extension);
+    const weight = getExtensionWeight(extension) * getEventMultiplier(event.type);
     const bucket = this.bucketsByTargetSecond.get(bucketKey) ?? createBucket(targetKey, bucketSecond);
 
     bucket.totalWeight += weight;

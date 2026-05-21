@@ -7,13 +7,31 @@ const VIEW_COPY = {
   },
   rules: {
     title: '탐지 규칙',
-    subtitle: '규칙 편집 화면이 연결되기 전까지 비어있는 상태로 유지됩니다.'
+    subtitle: '확장자 분류와 파일 이벤트별 감시 가중치를 조정합니다.'
   },
   settings: {
     title: '설정',
     subtitle: '탐지 후 자동 대응 단계를 설정합니다.'
   }
 };
+
+const DEFAULT_DETECTION_POLICY = {
+  weights: {
+    knownExtension: 0.1,
+    unknownExtension: 1,
+    noExtension: 1,
+    suspiciousExtension: 2
+  },
+  eventMultipliers: {
+    create: 1,
+    modify: 1,
+    rename: 1.5
+  },
+  userAllowedExtensions: [],
+  suspiciousExtensions: ['locked', 'encrypted', 'warning', 'decrypt', 'ransom', 'recover', 'pay']
+};
+
+let detectionPolicyDraft = cloneDetectionPolicy(DEFAULT_DETECTION_POLICY);
 
 
 const socketProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -81,6 +99,7 @@ async function loadState() {
     updateWatchTargetControls(snapshot);
     updateDemoControls(snapshot);
     updateResponsePolicyControls(snapshot.responsePolicy);
+    updateDetectionPolicyControls(snapshot.detectionPolicy);
 
     updateQuarantineTable(snapshot.quarantineJobs ?? []);
 
@@ -461,6 +480,282 @@ function showResponsePolicyError(message) {
   if (!error) return;
   error.hidden = false;
   error.innerText = message;
+}
+
+function updateDetectionPolicyControls(policy = {}) {
+  detectionPolicyDraft = normalizeClientDetectionPolicy(policy);
+
+  document.querySelectorAll('[data-policy-path]').forEach((input) => {
+    const value = getPolicyPathValue(detectionPolicyDraft, input.dataset.policyPath);
+    if (document.activeElement !== input) {
+      input.value = String(value);
+    }
+    updateDetectionPolicyNumberInput(input.dataset.policyPath, value);
+  });
+
+  renderAllowedExtensionList();
+
+  const status = document.getElementById('detection-policy-status');
+  if (status) {
+    status.innerText = '현재 규칙 적용 중';
+  }
+
+  clearDetectionPolicyError();
+}
+
+function normalizeClientDetectionPolicy(policy = {}) {
+  const source = policy && typeof policy === 'object' ? policy : {};
+
+  return {
+    weights: {
+      knownExtension: readPolicyNumber(source.weights?.knownExtension, DEFAULT_DETECTION_POLICY.weights.knownExtension),
+      unknownExtension: readPolicyNumber(source.weights?.unknownExtension, DEFAULT_DETECTION_POLICY.weights.unknownExtension),
+      noExtension: readPolicyNumber(source.weights?.noExtension, DEFAULT_DETECTION_POLICY.weights.noExtension),
+      suspiciousExtension: readPolicyNumber(source.weights?.suspiciousExtension, DEFAULT_DETECTION_POLICY.weights.suspiciousExtension)
+    },
+    eventMultipliers: {
+      create: readPolicyNumber(source.eventMultipliers?.create, DEFAULT_DETECTION_POLICY.eventMultipliers.create),
+      modify: readPolicyNumber(source.eventMultipliers?.modify, DEFAULT_DETECTION_POLICY.eventMultipliers.modify),
+      rename: readPolicyNumber(source.eventMultipliers?.rename, DEFAULT_DETECTION_POLICY.eventMultipliers.rename)
+    },
+    userAllowedExtensions: normalizeClientExtensionList(source.userAllowedExtensions),
+    suspiciousExtensions: normalizeClientExtensionList(
+      source.suspiciousExtensions,
+      DEFAULT_DETECTION_POLICY.suspiciousExtensions
+    )
+  };
+}
+
+function readPolicyNumber(value, fallback) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function normalizeClientExtensionList(rawExtensions, fallback = []) {
+  const source = Array.isArray(rawExtensions) ? rawExtensions : fallback;
+  const seen = new Set();
+  const extensions = [];
+
+  for (const extension of source) {
+    const normalized = normalizeClientExtension(extension);
+    if (normalized && !seen.has(normalized)) {
+      seen.add(normalized);
+      extensions.push(normalized);
+    }
+  }
+
+  return extensions;
+}
+
+function normalizeClientExtension(extension) {
+  const value = String(extension ?? '').trim();
+  if (!value) return '';
+  return value.startsWith('.') ? value.slice(1).toLowerCase() : value.toLowerCase();
+}
+
+function cloneDetectionPolicy(policy) {
+  return {
+    weights: { ...policy.weights },
+    eventMultipliers: { ...policy.eventMultipliers },
+    userAllowedExtensions: [...policy.userAllowedExtensions],
+    suspiciousExtensions: [...policy.suspiciousExtensions]
+  };
+}
+
+function getPolicyPathValue(policy, policyPath) {
+  const [group, key] = policyPath.split('.');
+  return policy?.[group]?.[key] ?? 0;
+}
+
+function setPolicyPathValue(policy, policyPath, value) {
+  const [group, key] = policyPath.split('.');
+  if (!policy[group]) {
+    policy[group] = {};
+  }
+  policy[group][key] = value;
+}
+
+function updateDetectionPolicyNumberInput(policyPath, value) {
+  const input = document.querySelector(`[data-policy-number="${policyPath}"]`);
+  if (input && document.activeElement !== input) {
+    input.value = formatPolicyNumber(value);
+  }
+}
+
+function handleDetectionPolicyRangeInput(event) {
+  const input = event.target.closest('[data-policy-path]');
+  if (!input) return;
+
+  const value = Number(input.value);
+  if (!Number.isFinite(value)) return;
+
+  setPolicyPathValue(detectionPolicyDraft, input.dataset.policyPath, value);
+  updateDetectionPolicyNumberInput(input.dataset.policyPath, value);
+}
+
+function handleDetectionPolicyNumberInput(event) {
+  const input = event.target.closest('[data-policy-number]');
+  if (!input) return;
+
+  const value = Number(input.value);
+  if (!Number.isFinite(value) || value < 0) return;
+
+  const range = document.querySelector(`[data-policy-path="${input.dataset.policyNumber}"]`);
+  const max = Number(input.max);
+  const boundedValue = Number.isFinite(max) ? Math.min(value, max) : value;
+
+  setPolicyPathValue(detectionPolicyDraft, input.dataset.policyNumber, boundedValue);
+  if (range) {
+    range.value = String(boundedValue);
+  }
+}
+
+function handleDetectionPolicyNumberChange(event) {
+  const input = event.target.closest('[data-policy-number]');
+  if (!input) return;
+
+  const currentValue = getPolicyPathValue(detectionPolicyDraft, input.dataset.policyNumber);
+  input.value = formatPolicyNumber(currentValue);
+}
+
+function formatPolicyNumber(value) {
+  return Number(value).toFixed(2);
+}
+
+function handleAllowedExtensionAdd() {
+  const input = document.getElementById('allowed-extension-input');
+  const normalized = normalizeClientExtension(input?.value);
+
+  if (!normalized) {
+    showDetectionPolicyError('추가할 확장자를 입력하세요.');
+    return;
+  }
+
+  if (!detectionPolicyDraft.userAllowedExtensions.includes(normalized)) {
+    detectionPolicyDraft.userAllowedExtensions.push(normalized);
+  }
+
+  if (input) {
+    input.value = '';
+  }
+
+  clearDetectionPolicyError();
+  renderAllowedExtensionList();
+}
+
+function renderAllowedExtensionList() {
+  const container = document.getElementById('allowed-extension-list');
+  if (!container) return;
+
+  const extensions = detectionPolicyDraft.userAllowedExtensions;
+  if (extensions.length === 0) {
+    container.innerHTML = '<span class="empty-chip">추가된 확장자가 없습니다.</span>';
+    return;
+  }
+
+  container.innerHTML = extensions.map((extension) => `
+    <span class="extension-chip">
+      .${escapeHtml(extension)}
+      <button type="button" aria-label="${escapeHtml(extension)} 제거" data-extension-remove="${escapeHtml(extension)}">×</button>
+    </span>
+  `).join('');
+}
+
+function handleAllowedExtensionRemove(event) {
+  const btn = event.target.closest('[data-extension-remove]');
+  if (!btn) return;
+
+  detectionPolicyDraft.userAllowedExtensions = detectionPolicyDraft.userAllowedExtensions
+    .filter((extension) => extension !== btn.dataset.extensionRemove);
+  renderAllowedExtensionList();
+}
+
+async function handleDetectionPolicySave(event) {
+  event.preventDefault();
+
+  const saveBtn = document.getElementById('btn-detection-policy-save');
+  const payload = cloneDetectionPolicy(detectionPolicyDraft);
+
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.innerText = '저장 중';
+  }
+
+  try {
+    const response = await fetch(`${API_URL}/settings/detection-policy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      showDetectionPolicyError(error.message || error.error || '탐지 규칙 저장 실패');
+      return;
+    }
+
+    const policy = await response.json();
+    updateDetectionPolicyControls(policy);
+    showNotification('탐지 규칙이 저장되었습니다.');
+  } catch (err) {
+    console.error(err);
+    showDetectionPolicyError('탐지 규칙 저장 중 네트워크 오류가 발생했습니다.');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerText = '저장';
+    }
+  }
+}
+
+async function handleDetectionPolicyReset() {
+  const resetBtn = document.getElementById('btn-detection-policy-reset');
+
+  if (!confirm('가중치와 사용자 화이트리스트 확장자를 기본값으로 초기화할까요?')) {
+    return;
+  }
+
+  if (resetBtn) {
+    resetBtn.disabled = true;
+    resetBtn.innerText = '초기화 중';
+  }
+
+  try {
+    const response = await fetch(`${API_URL}/settings/detection-policy/reset`, {
+      method: 'POST'
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      showDetectionPolicyError(error.message || error.error || '탐지 규칙 초기화 실패');
+      return;
+    }
+
+    const policy = await response.json();
+    updateDetectionPolicyControls(policy);
+    showNotification('탐지 규칙이 기본값으로 초기화되었습니다.');
+  } catch (err) {
+    console.error(err);
+    showDetectionPolicyError('탐지 규칙 초기화 중 네트워크 오류가 발생했습니다.');
+  } finally {
+    if (resetBtn) {
+      resetBtn.disabled = false;
+      resetBtn.innerText = '가중치 초기화';
+    }
+  }
+}
+
+function showDetectionPolicyError(message) {
+  const error = document.getElementById('detection-policy-error');
+  if (!error) return;
+  error.hidden = false;
+  error.innerText = message;
+}
+
+function clearDetectionPolicyError() {
+  const error = document.getElementById('detection-policy-error');
+  if (!error) return;
+  error.hidden = true;
+  error.innerText = '';
 }
 
 
@@ -873,6 +1168,19 @@ document.getElementById('btn-demo-reset')?.addEventListener('click', handleDemoR
 document.getElementById('btn-watch-toggle')?.addEventListener('click', handleWatchToggle);
 document.getElementById('btn-watch-target-apply')?.addEventListener('click', handleWatchTargetApply);
 document.getElementById('response-policy-form')?.addEventListener('submit', handleResponsePolicySave);
+document.getElementById('detection-policy-form')?.addEventListener('submit', handleDetectionPolicySave);
+document.getElementById('detection-policy-form')?.addEventListener('input', handleDetectionPolicyRangeInput);
+document.getElementById('detection-policy-form')?.addEventListener('input', handleDetectionPolicyNumberInput);
+document.getElementById('detection-policy-form')?.addEventListener('change', handleDetectionPolicyNumberChange);
+document.getElementById('btn-detection-policy-reset')?.addEventListener('click', handleDetectionPolicyReset);
+document.getElementById('btn-allowed-extension-add')?.addEventListener('click', handleAllowedExtensionAdd);
+document.getElementById('allowed-extension-input')?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    handleAllowedExtensionAdd();
+  }
+});
+document.getElementById('allowed-extension-list')?.addEventListener('click', handleAllowedExtensionRemove);
 document.querySelectorAll('input[name="watch-mode"]').forEach((radio) => {
   radio.addEventListener('change', handleWatchModeChange);
 });
