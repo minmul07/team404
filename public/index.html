@@ -49,6 +49,13 @@
                     <h2>감시 중인 항목</h2>
                     <p id="watching-count">0</p>
                 </div>
+                <div class="card stat-card weight-stat-card">
+                    <h2>현재 가중치</h2>
+                    <p id="current-weight">0.00 / 10.00</p>
+                    <div class="weight-meter" aria-hidden="true">
+                        <span id="current-weight-bar"></span>
+                    </div>
+                </div>
                 <div class="card stat-card">
                     <h2>감시 디렉터리</h2>
                     <p id="target-path">-</p>
@@ -97,7 +104,7 @@
                             <tr>
                                 <th>ID</th>
                                 <th>대상 경로</th>
-                                <th>항목 수</th>
+                                <th>파일 항목 수</th>
                                 <th>상태</th>
                                 <th>액션</th>
                             </tr>
@@ -116,6 +123,11 @@
                 </div>
                 <form id="detection-policy-form" class="detection-policy-form">
                     <div class="rules-grid">
+                        <label class="slider-control threshold-control">
+                            <span>기준 가중치</span>
+                            <input type="range" min="1" max="50" step="0.1" data-policy-path="thresholdWeight">
+                            <input class="policy-number-input" type="number" min="1" max="50" step="0.1" data-policy-number="thresholdWeight" value="10.00">
+                        </label>
                         <label class="slider-control">
                             <span>정상 확장자</span>
                             <input type="range" min="0" max="5" step="0.01" data-policy-path="weights.knownExtension">

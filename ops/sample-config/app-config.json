@@ -19,6 +19,7 @@
   },
   "rules": [],
   "detectionPolicy": {
+    "thresholdWeight": 10,
     "weights": {
       "knownExtension": 0.1,
       "unknownExtension": 1,

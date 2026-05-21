@@ -1,5 +1,6 @@
 export const EVENT_NAMES = Object.freeze({
   FS_EVENT: 'fs_event',
+  RULE_WEIGHT_UPDATED: 'rule_weight_updated',
   RULE_MATCH: 'rule_match',
   INCIDENT_OPENED: 'incident_opened',
   INCIDENT_UPDATED: 'incident_updated',

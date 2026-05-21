@@ -85,16 +85,26 @@ export async function startAttack(onEvent = null, options = {}) {
 
             await new Promise(res => setTimeout(res, 100));
 
-        } catch {
+        } catch (error) {
+            const blockReason = formatBlockReason(error, filePath);
             writeLog({
                 event: 'demo_blocked_by_quarantine',
                 blockedPath: filePath,
                 index: i,
-                reason: 'quarantine active'
+                reason: blockReason,
+                errorCode: error?.code ?? null,
+                errorMessage: error?.message ?? null
             });
 
             fs.writeFileSync(BACKUP_FILE, JSON.stringify(backup, null, 2));
-            return { status: 'blocked', targetDir: TARGET_DIR };
+            return {
+                status: 'blocked',
+                targetDir: TARGET_DIR,
+                blockedPath: filePath,
+                blockedIndex: i,
+                reason: blockReason,
+                errorCode: error?.code ?? null
+            };
         }
     }
 
@@ -217,6 +227,19 @@ function findLockedFiles(rootPath) {
     }
 
     return lockedFiles;
+}
+
+function formatBlockReason(error, filePath) {
+    const code = error?.code;
+    if (code === 'EACCES' || code === 'EPERM') {
+        return `Permission denied (${code}) while writing ${filePath}`;
+    }
+
+    if (error?.message) {
+        return `${error.message} (${filePath})`;
+    }
+
+    return `Quarantine blocked write access to ${filePath}`;
 }
 
 if (isDirectCliExecution()) {

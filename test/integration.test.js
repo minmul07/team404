@@ -106,6 +106,8 @@ test('integration: detection-to-quarantine-to-restore flow', async () => {
     assert.ok(captured.incidentOpened, 'INCIDENT_OPENED should be emitted');
     assert.ok(captured.quarantineStarted, 'QUARANTINE_STARTED should be emitted');
     assert.ok(captured.quarantineCompleted, 'QUARANTINE_COMPLETED should be emitted');
+    assert.equal(captured.quarantineCompleted.entryCount, 3);
+    assert.equal(captured.quarantineCompleted.permissionEntryCount, 5);
 
     const incident = runtime.incidentStore.getIncidents().find(i => i.id === captured.incidentOpened.id);
     assert.ok(incident, 'Incident should exist in store');
@@ -114,6 +116,8 @@ test('integration: detection-to-quarantine-to-restore flow', async () => {
     const restoreResult = await runtime.restoreIncident(incident.id);
 
     assert.ok(captured.restoreCompleted, 'RESTORE_COMPLETED should be emitted');
+    assert.equal(restoreResult.entryCount, 3);
+    assert.equal(restoreResult.permissionEntryCount, 5);
     assert.equal(restoreResult.decryptedFileCount, 1);
     assert.equal(await fs.readFile(path.join(tempDir, 'subdir', 'secret.txt'), 'utf8'), 'secret payload');
     await assert.rejects(

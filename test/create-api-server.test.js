@@ -231,6 +231,7 @@ test('handleApiRequest returns detection policy settings', async () => {
 
   assert.equal(response.statusCode, 200);
   assert.equal(response.payload.weights.knownExtension, 0.1);
+  assert.equal(response.payload.thresholdWeight, 10);
   assert.equal(response.payload.eventMultipliers.rename, 1.5);
 });
 
@@ -244,6 +245,7 @@ test('handleApiRequest updates detection policy settings', async () => {
       method: 'PUT',
       url: API_ROUTES.DETECTION_POLICY,
       body: {
+        thresholdWeight: 12,
         weights: {
           knownExtension: 0.2,
           unknownExtension: 1.2,
@@ -265,6 +267,7 @@ test('handleApiRequest updates detection policy settings', async () => {
   assert.equal(response.statusCode, 200);
   assert.equal(runtime.updateDetectionPolicyCalls.length, 1);
   assert.deepEqual(response.payload.userAllowedExtensions, ['backup']);
+  assert.equal(response.payload.thresholdWeight, 12);
   assert.equal(response.payload.weights.suspiciousExtension, 2.4);
 });
 
@@ -273,6 +276,7 @@ test('handleApiRequest resets detection policy settings', async () => {
   const response = createResponseDouble();
 
   runtime.detectionPolicy = {
+    thresholdWeight: 20,
     weights: {
       knownExtension: 0.9,
       unknownExtension: 1.9,
@@ -300,6 +304,7 @@ test('handleApiRequest resets detection policy settings', async () => {
 
   assert.equal(response.statusCode, 200);
   assert.equal(runtime.resetDetectionPolicyCalls, 1);
+  assert.equal(response.payload.thresholdWeight, 10);
   assert.equal(response.payload.weights.knownExtension, 0.1);
   assert.deepEqual(response.payload.userAllowedExtensions, []);
 });
@@ -383,6 +388,16 @@ test('createApiServer upgrades dashboard WebSocket and broadcasts runtime events
     assert.equal(quarantineFailedMessage.type, 'QUARANTINE_FAILED');
     assert.equal(quarantineFailedMessage.payload.incidentId, 'test-incident-2');
     assert.equal(quarantineFailedMessage.payload.status, 'failed');
+
+    runtime.eventBus.emit(EVENT_NAMES.RULE_WEIGHT_UPDATED, {
+      currentWeight: 4,
+      thresholdWeight: 10,
+      path: '/tmp/demo-target/example.txt'
+    });
+
+    const ruleWeightMessage = decodeWebSocketFrame(socket.chunks[5]);
+    assert.equal(ruleWeightMessage.type, 'RULE_WEIGHT_UPDATED');
+    assert.equal(ruleWeightMessage.payload.currentWeight, 4);
   } finally {
     server.emit('close');
   }
@@ -406,6 +421,7 @@ function createRuntimeDouble() {
       shutdownSystem: false
     },
     detectionPolicy: {
+      thresholdWeight: 10,
       weights: {
         knownExtension: 0.1,
         unknownExtension: 1,
@@ -451,6 +467,7 @@ function createRuntimeDouble() {
     },
     getDetectionPolicy() {
       return {
+        thresholdWeight: this.detectionPolicy.thresholdWeight,
         weights: { ...this.detectionPolicy.weights },
         eventMultipliers: { ...this.detectionPolicy.eventMultipliers },
         userAllowedExtensions: [...this.detectionPolicy.userAllowedExtensions],
@@ -483,6 +500,7 @@ function createRuntimeDouble() {
     async updateDetectionPolicy(policy) {
       this.updateDetectionPolicyCalls.push(policy);
       this.detectionPolicy = {
+        thresholdWeight: policy.thresholdWeight,
         weights: { ...policy.weights },
         eventMultipliers: { ...policy.eventMultipliers },
         userAllowedExtensions: [...policy.userAllowedExtensions],
@@ -493,6 +511,7 @@ function createRuntimeDouble() {
     async resetDetectionPolicy() {
       this.resetDetectionPolicyCalls += 1;
       this.detectionPolicy = {
+        thresholdWeight: 10,
         weights: {
           knownExtension: 0.1,
           unknownExtension: 1,

@@ -126,6 +126,7 @@ test('createRuntime updates detection policy and persists it when configPath exi
     const runtime = createRuntime(config);
 
     const policy = await runtime.updateDetectionPolicy({
+      thresholdWeight: 12,
       weights: {
         knownExtension: 0.2,
         unknownExtension: 1.3,
@@ -142,9 +143,11 @@ test('createRuntime updates detection policy and persists it when configPath exi
     });
 
     assert.deepEqual(policy.userAllowedExtensions, ['backup']);
+    assert.equal(policy.thresholdWeight, 12);
     assert.equal(runtime.getHealth().detectionPolicy.weights.knownExtension, 0.2);
 
     const persisted = JSON.parse(await fs.readFile(configPath, 'utf8'));
+    assert.equal(persisted.detectionPolicy.thresholdWeight, 12);
     assert.deepEqual(persisted.detectionPolicy.userAllowedExtensions, ['backup']);
     assert.equal(persisted.detectionPolicy.eventMultipliers.rename, 1.6);
   } finally {
@@ -169,6 +172,7 @@ test('createRuntime resets detection policy to default and persists it', async (
     const config = createConfig();
     config.meta.configPath = configPath;
     config.detectionPolicy = {
+      thresholdWeight: 20,
       weights: {
         knownExtension: 0.9
       },
@@ -178,10 +182,12 @@ test('createRuntime resets detection policy to default and persists it', async (
 
     const policy = await runtime.resetDetectionPolicy();
 
+    assert.equal(policy.thresholdWeight, 10);
     assert.equal(policy.weights.knownExtension, 0.1);
     assert.deepEqual(policy.userAllowedExtensions, []);
 
     const persisted = JSON.parse(await fs.readFile(configPath, 'utf8'));
+    assert.equal(persisted.detectionPolicy.thresholdWeight, 10);
     assert.equal(persisted.detectionPolicy.weights.knownExtension, 0.1);
     assert.deepEqual(persisted.detectionPolicy.userAllowedExtensions, []);
   } finally {

@@ -18,11 +18,15 @@ function createRuleEngine(configOverrides = {}) {
   });
 
   const matches = [];
+  const weightUpdates = [];
   eventBus.on(EVENT_NAMES.RULE_MATCH, (match) => {
     matches.push(match);
   });
+  eventBus.on(EVENT_NAMES.RULE_WEIGHT_UPDATED, (payload) => {
+    weightUpdates.push(payload);
+  });
 
-  return { eventBus, ruleEngine, matches };
+  return { eventBus, ruleEngine, matches, weightUpdates };
 }
 
 function emitFsEvent(
@@ -40,8 +44,8 @@ function emitFsEvent(
   });
 }
 
-test('RuleEngine emits critical extension weight burst after one target exceeds bucket weight', () => {
-  const { eventBus, ruleEngine, matches } = createRuleEngine();
+test('RuleEngine emits weight updates and critical extension weight burst after one target exceeds bucket weight', () => {
+  const { eventBus, ruleEngine, matches, weightUpdates } = createRuleEngine();
 
   for (let index = 1; index <= 6; index += 1) {
     emitFsEvent(eventBus, {
@@ -51,6 +55,9 @@ test('RuleEngine emits critical extension weight burst after one target exceeds 
   }
 
   assert.equal(matches.length, 1);
+  assert.equal(weightUpdates.length, 6);
+  assert.equal(weightUpdates[5].currentWeight, 12);
+  assert.equal(weightUpdates[5].thresholdWeight, 10);
   assert.equal(matches[0].ruleId, 'extension-weight-burst');
   assert.equal(matches[0].severity, 'critical');
   assert.equal(matches[0].autoQuarantine, true);
@@ -60,6 +67,47 @@ test('RuleEngine emits critical extension weight burst after one target exceeds 
   assert.equal(matches[0].bucketMs, 1000);
   assert.deepEqual(matches[0].eventTypes, ['modify']);
   assert.equal(matches[0].samplePaths.length, 6);
+
+  ruleEngine.stop();
+});
+
+test('RuleEngine uses configured threshold weight', () => {
+  const { eventBus, ruleEngine, matches } = createRuleEngine({
+    detectionPolicy: {
+      thresholdWeight: 12,
+      weights: {
+        knownExtension: 0.1,
+        unknownExtension: 1,
+        noExtension: 1,
+        suspiciousExtension: 2
+      },
+      eventMultipliers: {
+        create: 1,
+        modify: 1,
+        rename: 1.5
+      },
+      userAllowedExtensions: [],
+      suspiciousExtensions: ['locked']
+    }
+  });
+
+  for (let index = 1; index <= 6; index += 1) {
+    emitFsEvent(eventBus, {
+      id: String(index),
+      path: `/tmp/watch/file-${index}.locked`
+    });
+  }
+
+  assert.equal(matches.length, 0);
+
+  emitFsEvent(eventBus, {
+    id: '7',
+    path: '/tmp/watch/file-7.locked'
+  });
+
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].thresholdWeight, 12);
+  assert.equal(matches[0].totalWeight, 14);
 
   ruleEngine.stop();
 });

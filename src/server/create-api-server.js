@@ -276,6 +276,7 @@ function attachDashboardWebSocket({ server, runtime }) {
     [EVENT_NAMES.QUARANTINE_COMPLETED, (payload) => broadcast({ type: 'QUARANTINE_COMPLETED', payload })],
     [EVENT_NAMES.QUARANTINE_FAILED, (payload) => broadcast({ type: 'QUARANTINE_FAILED', payload })],
     [EVENT_NAMES.RESTORE_COMPLETED, (payload) => broadcast({ type: 'RESTORE_COMPLETED', payload })],
+    [EVENT_NAMES.RULE_WEIGHT_UPDATED, (payload) => broadcast({ type: 'RULE_WEIGHT_UPDATED', payload })],
     [EVENT_NAMES.RULE_MATCH, (payload) => broadcast({ type: 'RULE_MATCH', payload })],
     [EVENT_NAMES.DEMO_STARTED, (payload) => broadcast({ type: 'DEMO_STARTED', payload })],
     [EVENT_NAMES.DEMO_ABORTED, (payload) => broadcast({ type: 'DEMO_ABORTED', payload })],

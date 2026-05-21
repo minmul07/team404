@@ -109,6 +109,7 @@ function normalizeCustomExtensionWeights(rawCustomExtensionWeights) {
 
 function cloneDetectionPolicy(policy) {
   return {
+    thresholdWeight: policy.thresholdWeight,
     weights: { ...policy.weights },
     eventMultipliers: { ...policy.eventMultipliers },
     userAllowedExtensions: [...policy.userAllowedExtensions],

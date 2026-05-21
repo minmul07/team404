@@ -8,6 +8,7 @@ const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const DEFAULT_DETECTION_POLICY_PATH = path.join(PROJECT_ROOT, 'ops/default-detection-policy.json');
 
 const BUILTIN_DETECTION_POLICY = Object.freeze({
+  thresholdWeight: 10,
   weights: Object.freeze({
     knownExtension: 0.1,
     unknownExtension: 1.0,
@@ -89,6 +90,11 @@ export function normalizeExtension(ext) {
 
 function normalizeDetectionPolicyShape(policy, fallback) {
   return {
+    thresholdWeight: normalizePositiveNumber(
+      policy.thresholdWeight,
+      fallback.thresholdWeight,
+      'detectionPolicy.thresholdWeight'
+    ),
     weights: {
       knownExtension: normalizeNonNegativeNumber(
         policy.weights?.knownExtension,
@@ -161,8 +167,21 @@ function normalizeNonNegativeNumber(value, fallback, fieldName) {
   return value;
 }
 
+function normalizePositiveNumber(value, fallback, fieldName) {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${fieldName} must be a positive number`);
+  }
+
+  return value;
+}
+
 function cloneDetectionPolicy(policy) {
   return {
+    thresholdWeight: policy.thresholdWeight,
     weights: { ...policy.weights },
     eventMultipliers: { ...policy.eventMultipliers },
     userAllowedExtensions: [...policy.userAllowedExtensions],

@@ -180,7 +180,7 @@ export function createRuntime(config, options = {}) {
 
         if (result?.status === 'blocked') {
           state.demo.status = 'failed';
-          state.demo.lastError = 'Demo was blocked before all files were encrypted';
+          state.demo.lastError = result.reason ?? 'Demo was blocked before all files were encrypted';
           eventBus.emit(EVENT_NAMES.DEMO_ABORTED, toDemoSnapshot(state.demo));
           return;
         }
@@ -273,6 +273,7 @@ export function createRuntime(config, options = {}) {
 
 function cloneDetectionPolicy(policy) {
   return {
+    thresholdWeight: policy.thresholdWeight,
     weights: { ...policy.weights },
     eventMultipliers: { ...policy.eventMultipliers },
     userAllowedExtensions: [...policy.userAllowedExtensions],
@@ -281,6 +282,7 @@ function cloneDetectionPolicy(policy) {
 }
 
 function applyDetectionPolicy(target, source) {
+  target.thresholdWeight = source.thresholdWeight;
   target.weights = { ...source.weights };
   target.eventMultipliers = { ...source.eventMultipliers };
   target.userAllowedExtensions = [...source.userAllowedExtensions];

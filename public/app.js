@@ -16,6 +16,7 @@ const VIEW_COPY = {
 };
 
 const DEFAULT_DETECTION_POLICY = {
+  thresholdWeight: 10,
   weights: {
     knownExtension: 0.1,
     unknownExtension: 1,
@@ -32,6 +33,8 @@ const DEFAULT_DETECTION_POLICY = {
 };
 
 let detectionPolicyDraft = cloneDetectionPolicy(DEFAULT_DETECTION_POLICY);
+const pendingRuleWeightsByPath = new Map();
+let latestRuleWeight = null;
 
 
 const socketProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -48,6 +51,11 @@ socket.onclose = () => {
 socket.onmessage = (event) => {
   const msg = JSON.parse(event.data);
   switch (msg.type) {
+    case 'RULE_WEIGHT_UPDATED':
+      cacheRuleWeight(msg.payload);
+      latestRuleWeight = normalizeRuleWeight(msg.payload);
+      updateRuleWeightDisplay(latestRuleWeight);
+      break;
     case 'FILE_EVENT':
       appendFsEventEntry(normalizeFileEvent(msg.payload));
       break;
@@ -76,14 +84,8 @@ function setServerStatus(status, label) {
 
 async function loadState() {
   try {
-    const [snapshotRes, alertsRes, incidentsRes] = await Promise.all([
-      fetch(`${API_URL}/snapshot`),
-      fetch(`${API_URL}/alerts`),
-      fetch(`${API_URL}/incidents`)
-    ]);
+    const snapshotRes = await fetch(`${API_URL}/snapshot`);
     const snapshot = await snapshotRes.json();
-    const alerts = await alertsRes.json();
-    const incidents = await incidentsRes.json();
 
     const target = snapshot.activeTarget;
     const targetPath = (target?.rootPath ?? target) || '없음';
@@ -100,10 +102,12 @@ async function loadState() {
     updateDemoControls(snapshot);
     updateResponsePolicyControls(snapshot.responsePolicy);
     updateDetectionPolicyControls(snapshot.detectionPolicy);
+    updateRuleWeightDisplay(latestRuleWeight ?? {
+      currentWeight: 0,
+      thresholdWeight: snapshot.detectionPolicy?.thresholdWeight ?? DEFAULT_DETECTION_POLICY.thresholdWeight
+    });
 
     updateQuarantineTable(snapshot.quarantineJobs ?? []);
-
-    renderIncidentTable(incidents.items ?? []);
   } catch (err) {
     console.error('데이터 로드 실패', err);
   }
@@ -507,6 +511,7 @@ function normalizeClientDetectionPolicy(policy = {}) {
   const source = policy && typeof policy === 'object' ? policy : {};
 
   return {
+    thresholdWeight: readPolicyNumber(source.thresholdWeight, DEFAULT_DETECTION_POLICY.thresholdWeight),
     weights: {
       knownExtension: readPolicyNumber(source.weights?.knownExtension, DEFAULT_DETECTION_POLICY.weights.knownExtension),
       unknownExtension: readPolicyNumber(source.weights?.unknownExtension, DEFAULT_DETECTION_POLICY.weights.unknownExtension),
@@ -554,6 +559,7 @@ function normalizeClientExtension(extension) {
 
 function cloneDetectionPolicy(policy) {
   return {
+    thresholdWeight: policy.thresholdWeight,
     weights: { ...policy.weights },
     eventMultipliers: { ...policy.eventMultipliers },
     userAllowedExtensions: [...policy.userAllowedExtensions],
@@ -562,11 +568,18 @@ function cloneDetectionPolicy(policy) {
 }
 
 function getPolicyPathValue(policy, policyPath) {
+  if (!policyPath.includes('.')) {
+    return policy?.[policyPath] ?? 0;
+  }
   const [group, key] = policyPath.split('.');
   return policy?.[group]?.[key] ?? 0;
 }
 
 function setPolicyPathValue(policy, policyPath, value) {
+  if (!policyPath.includes('.')) {
+    policy[policyPath] = value;
+    return;
+  }
   const [group, key] = policyPath.split('.');
   if (!policy[group]) {
     policy[group] = {};
@@ -813,7 +826,7 @@ function updateQuarantineTable(jobs) {
     <tr>
       <td>${escapeHtml(job.incidentId.substring(0, 8))}...</td>
       <td class="path-cell" title="${escapeHtml(job.rootPath)}">${escapeHtml(job.rootPath)}</td>
-      <td>${Number(job.entryCount) || 0}개</td>
+      <td title="권한 레코드 ${Number(job.permissionEntryCount) || Number(job.entryCount) || 0}개">${Number(job.entryCount) || 0}개</td>
       <td><span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabel)}</span></td>
       <td>
         ${canRestore
@@ -833,45 +846,6 @@ function getStatusLabel(status) {
     restored: '복구됨'
   };
   return labels[status] ?? status;
-}
-
-
-function renderIncidentTable(incidents) {
-  const list = document.getElementById('quarantine-list');
-  if (!list) return;
-
-  if (incidents.length === 0) {
-    list.innerHTML = `
-      <tr>
-        <td class="empty-row" colspan="5">등록된 Incident가 없습니다.</td>
-      </tr>
-    `;
-    return;
-  }
-
-  list.innerHTML = incidents.map(inc => {
-    const id = inc.id ?? inc.incidentId ?? '-';
-    const path = inc.monitorRootPath ?? '-';
-    const count = (inc.samplePaths ?? []).length;
-    const status = inc.status ?? 'open';
-    const statusLabel = getStatusLabel(status);
-    const shortId = String(id).substring(0, 8);
-    const canRestore = status === 'quarantined';
-
-    return `
-    <tr>
-      <td>${escapeHtml(shortId)}...</td>
-      <td class="path-cell" title="${escapeHtml(path)}">${escapeHtml(path)}</td>
-      <td>${count}개</td>
-      <td><span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabel)}</span></td>
-      <td>
-        ${canRestore
-          ? `<button class="btn-restore" type="button" data-incident-id="${escapeHtml(id)}">복구</button>`
-          : `<span class="badge ${escapeHtml(status)}">${escapeHtml(statusLabel)}</span>`}
-      </td>
-    </tr>
-  `;
-  }).join('');
 }
 
 
@@ -950,12 +924,40 @@ function appendIncidentEntry(entry) {
 
 
 function normalizeFileEvent(payload) {
+  const weight = takeRuleWeight(payload);
   return {
     _type: 'file',
     eventType: payload.type ?? 'event',
     path: payload.path,
     pid: payload.pid,
-    observedAt: payload.observedAt ?? new Date().toISOString()
+    observedAt: payload.observedAt ?? new Date().toISOString(),
+    weight
+  };
+}
+
+function cacheRuleWeight(payload = {}) {
+  if (!payload.path) return;
+  pendingRuleWeightsByPath.set(String(payload.path), normalizeRuleWeight(payload));
+  while (pendingRuleWeightsByPath.size > 200) {
+    const firstKey = pendingRuleWeightsByPath.keys().next().value;
+    pendingRuleWeightsByPath.delete(firstKey);
+  }
+}
+
+function takeRuleWeight(payload = {}) {
+  if (!payload.path) return null;
+  const key = String(payload.path);
+  const weight = pendingRuleWeightsByPath.get(key) ?? null;
+  pendingRuleWeightsByPath.delete(key);
+  return weight;
+}
+
+function normalizeRuleWeight(payload = {}) {
+  return {
+    currentWeight: readPolicyNumber(payload.currentWeight, 0),
+    thresholdWeight: readPolicyNumber(payload.thresholdWeight, DEFAULT_DETECTION_POLICY.thresholdWeight),
+    eventWeight: readPolicyNumber(payload.eventWeight, 0),
+    eventCount: Number.isFinite(payload.eventCount) ? payload.eventCount : 0
   };
 }
 
@@ -969,6 +971,8 @@ function normalizeIncidentEvent(msg) {
         ruleName: payload.ruleName,
         severity: payload.severity,
         reason: payload.reason,
+        totalWeight: payload.totalWeight,
+        thresholdWeight: payload.thresholdWeight,
         samplePaths: payload.samplePaths ?? [],
         observedAt: payload.observedAt ?? new Date().toISOString()
       };
@@ -1052,6 +1056,7 @@ function renderAlertEntry(alert) {
         ${alert.ruleName ? `<span class="log-rule">${escapeHtml(alert.ruleName)}</span>` : ''}
       </div>
       ${alert.samplePaths?.length ? renderFileChips(extractFileNames(alert.samplePaths)) : ''}
+      ${renderWeightLine(alert)}
       ${alert.reason ? `<div class="log-reason">${escapeHtml(alert.reason)}</div>` : ''}
     </div>
   `;
@@ -1087,9 +1092,43 @@ function renderFileEventEntry(entry) {
         <span class="log-type">${escapeHtml(type)}</span>
       </div>
       <div class="log-path">${escapeHtml(entry.path ?? '')}</div>
-      <div class="log-reason">PID: ${escapeHtml(String(entry.pid ?? '-'))}</div>
+      <div class="log-reason">
+        PID: ${escapeHtml(String(entry.pid ?? '-'))}
+        ${entry.weight ? renderInlineWeightBadge(entry.weight) : ''}
+      </div>
     </div>
   `;
+}
+
+function updateRuleWeightDisplay(payload = {}) {
+  const weight = normalizeRuleWeight(payload);
+  const current = Math.max(0, weight.currentWeight);
+  const threshold = weight.thresholdWeight > 0
+    ? weight.thresholdWeight
+    : DEFAULT_DETECTION_POLICY.thresholdWeight;
+  const label = document.getElementById('current-weight');
+  const bar = document.getElementById('current-weight-bar');
+  const percent = Math.min(100, (current / threshold) * 100);
+
+  if (label) {
+    label.innerText = `${formatPolicyNumber(current)} / ${formatPolicyNumber(threshold)}`;
+  }
+  if (bar) {
+    bar.style.width = `${percent}%`;
+    bar.classList.toggle('over-threshold', current > threshold);
+  }
+}
+
+function renderInlineWeightBadge(weight) {
+  return `<span class="weight-badge">가중치 ${formatPolicyNumber(weight.currentWeight)} / ${formatPolicyNumber(weight.thresholdWeight)}</span>`;
+}
+
+function renderWeightLine(alert) {
+  if (!Number.isFinite(alert.totalWeight) || !Number.isFinite(alert.thresholdWeight)) {
+    return '';
+  }
+
+  return `<div class="log-reason">누적 가중치: ${formatPolicyNumber(alert.totalWeight)} / ${formatPolicyNumber(alert.thresholdWeight)}</div>`;
 }
 
 function renderFileChips(files) {

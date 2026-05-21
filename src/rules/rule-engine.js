@@ -4,7 +4,6 @@ import { EVENT_NAMES, FILE_EVENT_TYPES } from '../shared/contracts/event-names.j
 import { getEventMultiplier, getExtensionWeight, loadExtensionWeights } from './extension-weight-loader.js';
 
 const BURST_RULE_ID = 'extension-weight-burst';
-const BURST_THRESHOLD = 10;
 const BUCKET_MS = 1000;
 const DETECTABLE_EVENT_TYPES = new Set([
   FILE_EVENT_TYPES.CREATE,
@@ -31,6 +30,7 @@ export class RuleEngine {
   }
 
   getState() {
+    const thresholdWeight = this.getThresholdWeight();
     return {
       activeRuleWindows: this.bucketsByTargetSecond.size,
       detectionPolicy: this.activeRuleSettings?.detectionPolicy ?? null,
@@ -38,7 +38,7 @@ export class RuleEngine {
         {
           ruleId: BURST_RULE_ID,
           eventTypes: [...DETECTABLE_EVENT_TYPES],
-          thresholdWeight: BURST_THRESHOLD,
+          thresholdWeight,
           bucketMs: BUCKET_MS,
           severity: 'critical',
           autoQuarantine: true
@@ -67,6 +67,7 @@ export class RuleEngine {
     const extension = parseExtension(event.path);
     const weight = getExtensionWeight(extension) * getEventMultiplier(event.type);
     const bucket = this.bucketsByTargetSecond.get(bucketKey) ?? createBucket(targetKey, bucketSecond);
+    const thresholdWeight = this.getThresholdWeight();
 
     bucket.totalWeight += weight;
     bucket.events.push(event);
@@ -74,7 +75,24 @@ export class RuleEngine {
     this.bucketsByTargetSecond.set(bucketKey, bucket);
     this.cleanupOldBuckets(targetKey, bucketSecond);
 
-    if (bucket.totalWeight <= BURST_THRESHOLD) {
+    this.eventBus.emit(EVENT_NAMES.RULE_WEIGHT_UPDATED, {
+      ruleId: BURST_RULE_ID,
+      ruleName: 'Extension Weight Burst',
+      monitorTargetId: event.monitorTargetId,
+      monitorRootPath: event.monitorRootPath,
+      path: event.path,
+      eventType: event.type,
+      eventWeight: weight,
+      currentWeight: bucket.totalWeight,
+      thresholdWeight,
+      eventCount: bucket.events.length,
+      bucketSecond,
+      bucketMs: BUCKET_MS,
+      observedAt: event.observedAt,
+      observedTs
+    });
+
+    if (bucket.totalWeight <= thresholdWeight) {
       return;
     }
 
@@ -87,14 +105,14 @@ export class RuleEngine {
       eventType: event.type,
       severity: 'critical',
       autoQuarantine: true,
-      reason: `extension weights reached ${formatWeight(bucket.totalWeight)}>${BURST_THRESHOLD} in 1s`,
+      reason: `extension weights reached ${formatWeight(bucket.totalWeight)}>${formatWeight(thresholdWeight)} in 1s`,
       observedAt: event.observedAt,
       observedTs,
       monitorTargetId: event.monitorTargetId,
       monitorRootPath: event.monitorRootPath,
       bucketSecond,
       bucketMs: BUCKET_MS,
-      thresholdWeight: BURST_THRESHOLD,
+      thresholdWeight,
       totalWeight: bucket.totalWeight,
       eventCount: bucket.events.length,
       samplePaths,
@@ -112,6 +130,10 @@ export class RuleEngine {
         this.bucketsByTargetSecond.delete(bucketKey);
       }
     }
+  }
+
+  getThresholdWeight() {
+    return this.activeRuleSettings?.detectionPolicy?.thresholdWeight ?? 10;
   }
 }
 

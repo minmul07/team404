@@ -132,13 +132,15 @@ export class QuarantineService {
       }
 
       this.inProgressIds.delete(incident.id);
+      const fileEntryCount = countFileEntries(entries);
 
       const job = {
         incidentId: incident.id,
         rootPath: incident.monitorRootPath,
         status: 'quarantined',
         quarantinedAt: new Date().toISOString(),
-        entryCount: entries.length
+        entryCount: fileEntryCount,
+        permissionEntryCount: entries.length
       };
 
       // 상태: QUARANTINED
@@ -148,7 +150,8 @@ export class QuarantineService {
         eventType: 'quarantine_completed',
         incidentId: incident.id,
         rootPath: incident.monitorRootPath,
-        entryCount: entries.length
+        entryCount: fileEntryCount,
+        permissionEntryCount: entries.length
       });
 
       return job;
@@ -202,6 +205,7 @@ export class QuarantineService {
       }
 
       const decryptResult = restoreDemoEncryption(record.rootPath);
+      const fileEntryCount = countFileEntries(record.entries);
 
       this.quarantineRecords.delete(incidentId);
 
@@ -210,7 +214,8 @@ export class QuarantineService {
         rootPath: record.rootPath,
         status: 'restored',
         restoredAt: new Date().toISOString(),
-        entryCount: record.entries.length,
+        entryCount: fileEntryCount,
+        permissionEntryCount: record.entries.length,
         decryptedFileCount: decryptResult.restoredCount
       };
 
@@ -221,7 +226,8 @@ export class QuarantineService {
         eventType: 'restore_completed',
         incidentId,
         rootPath: record.rootPath,
-        entryCount: record.entries.length
+        entryCount: fileEntryCount,
+        permissionEntryCount: record.entries.length
       });
 
       return result;
@@ -251,7 +257,8 @@ export class QuarantineService {
       jobs.push({
         incidentId,
         rootPath: record.rootPath,
-        entryCount: record.entries.length
+        entryCount: countFileEntries(record.entries),
+        permissionEntryCount: record.entries.length
       });
     }
     return jobs;
@@ -303,7 +310,11 @@ async function collectPermissions(rootPath) {
   async function walk(currentPath) {
     const stat = await fs.stat(currentPath);
     const mode = (stat.mode & 0o777).toString(8).padStart(3, '0');
-    entries.push({ filePath: currentPath, originalMode: mode });
+    entries.push({
+      filePath: currentPath,
+      originalMode: mode,
+      entryType: stat.isDirectory() ? 'dir' : 'file'
+    });
 
     if (stat.isDirectory()) {
       const children = await fs.readdir(currentPath);
@@ -315,6 +326,10 @@ async function collectPermissions(rootPath) {
 
   await walk(rootPath);
   return entries;
+}
+
+function countFileEntries(entries) {
+  return entries.filter((entry) => entry.entryType === 'file').length;
 }
 
 /**

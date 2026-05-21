@@ -76,6 +76,7 @@ test('loadAppConfig normalizes detection policy settings', async () => {
         targets: [{ id: 'input-target', rootPath: './configured-watch' }]
       },
       detectionPolicy: {
+        thresholdWeight: 14,
         weights: {
           knownExtension: 0.2,
           unknownExtension: 1.4,
@@ -94,6 +95,7 @@ test('loadAppConfig normalizes detection policy settings', async () => {
 
     const config = await loadAppConfig({ configPath });
 
+    assert.equal(config.detectionPolicy.thresholdWeight, 14);
     assert.equal(config.detectionPolicy.weights.unknownExtension, 1.4);
     assert.equal(config.detectionPolicy.eventMultipliers.rename, 1.7);
     assert.deepEqual(config.detectionPolicy.userAllowedExtensions, ['backup', 'log']);
