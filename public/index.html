@@ -29,7 +29,11 @@
             <div class="topbar-actions">
                 <div class="status-group">
                     <span id="status-dot" class="dot offline"></span>
-                    <span id="server-status-text">서버 연결 중...</span>
+                    <span id="server-status-text">메인 서버 연결 중...</span>
+                </div>
+                <div class="status-group">
+                    <span id="demo-status-dot" class="dot idle"></span>
+                    <span id="demo-server-status-text">데모 서버 대기</span>
                 </div>
                 <button id="btn-watch-toggle" class="btn-watch-toggle" type="button">감시 시작</button>
                 <div class="controls">
@@ -162,6 +166,16 @@
                             <span>Rename 보정</span>
                             <input type="range" min="0" max="3" step="0.01" data-policy-path="eventMultipliers.rename">
                             <input class="policy-number-input" type="number" min="0" max="3" step="0.01" data-policy-number="eventMultipliers.rename" value="1.50">
+                        </label>
+                        <label class="slider-control">
+                            <span>감소 주기(ms)</span>
+                            <input type="range" min="100" max="10000" step="100" data-policy-path="weightDecay.intervalMs">
+                            <input class="policy-number-input" type="number" min="100" max="10000" step="100" data-policy-number="weightDecay.intervalMs" value="1000">
+                        </label>
+                        <label class="slider-control">
+                            <span>주기당 감소량</span>
+                            <input type="range" min="0" max="10" step="0.1" data-policy-path="weightDecay.amount">
+                            <input class="policy-number-input" type="number" min="0" max="10" step="0.1" data-policy-number="weightDecay.amount" value="1.00">
                         </label>
                     </div>
 

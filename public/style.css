@@ -169,6 +169,16 @@ textarea {
     box-shadow: 0 0 8px var(--success);
 }
 
+.dot.idle {
+    background: var(--text-muted);
+    box-shadow: 0 0 8px rgba(148, 163, 184, 0.45);
+}
+
+.dot.warning {
+    background: var(--warning);
+    box-shadow: 0 0 8px var(--warning);
+}
+
 .dot.offline {
     background: var(--danger);
     box-shadow: 0 0 8px var(--danger);

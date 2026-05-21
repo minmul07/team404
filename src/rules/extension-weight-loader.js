@@ -112,6 +112,7 @@ function cloneDetectionPolicy(policy) {
     thresholdWeight: policy.thresholdWeight,
     weights: { ...policy.weights },
     eventMultipliers: { ...policy.eventMultipliers },
+    weightDecay: { ...policy.weightDecay },
     userAllowedExtensions: [...policy.userAllowedExtensions],
     suspiciousExtensions: [...policy.suspiciousExtensions]
   };

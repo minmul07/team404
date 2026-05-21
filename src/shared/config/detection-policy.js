@@ -20,6 +20,10 @@ const BUILTIN_DETECTION_POLICY = Object.freeze({
     modify: 1.0,
     rename: 1.5
   }),
+  weightDecay: Object.freeze({
+    intervalMs: 1000,
+    amount: 1.0
+  }),
   userAllowedExtensions: Object.freeze([]),
   suspiciousExtensions: Object.freeze([
     'locked',
@@ -134,6 +138,18 @@ function normalizeDetectionPolicyShape(policy, fallback) {
         'detectionPolicy.eventMultipliers.rename'
       )
     },
+    weightDecay: {
+      intervalMs: normalizePositiveInteger(
+        policy.weightDecay?.intervalMs,
+        fallback.weightDecay.intervalMs,
+        'detectionPolicy.weightDecay.intervalMs'
+      ),
+      amount: normalizeNonNegativeNumber(
+        policy.weightDecay?.amount,
+        fallback.weightDecay.amount,
+        'detectionPolicy.weightDecay.amount'
+      )
+    },
     userAllowedExtensions: normalizeExtensionList(
       policy.userAllowedExtensions,
       fallback.userAllowedExtensions,
@@ -179,11 +195,24 @@ function normalizePositiveNumber(value, fallback, fieldName) {
   return value;
 }
 
+function normalizePositiveInteger(value, fallback, fieldName) {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${fieldName} must be a positive integer`);
+  }
+
+  return value;
+}
+
 function cloneDetectionPolicy(policy) {
   return {
     thresholdWeight: policy.thresholdWeight,
     weights: { ...policy.weights },
     eventMultipliers: { ...policy.eventMultipliers },
+    weightDecay: { ...policy.weightDecay },
     userAllowedExtensions: [...policy.userAllowedExtensions],
     suspiciousExtensions: [...policy.suspiciousExtensions]
   };
@@ -192,6 +221,7 @@ function cloneDetectionPolicy(policy) {
 function deepFreeze(policy) {
   Object.freeze(policy.weights);
   Object.freeze(policy.eventMultipliers);
+  Object.freeze(policy.weightDecay);
   Object.freeze(policy.userAllowedExtensions);
   Object.freeze(policy.suspiciousExtensions);
   return Object.freeze(policy);

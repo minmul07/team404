@@ -210,3 +210,52 @@ test('RuleEngine keeps buckets per target and per wall-clock second', () => {
 
   ruleEngine.stop();
 });
+
+test('RuleEngine decays displayed bucket weight by configured amount', () => {
+  const { eventBus, ruleEngine, weightUpdates } = createRuleEngine({
+    detectionPolicy: {
+      thresholdWeight: 10,
+      weights: {
+        knownExtension: 0.1,
+        unknownExtension: 1,
+        noExtension: 1,
+        suspiciousExtension: 2
+      },
+      eventMultipliers: {
+        create: 1,
+        modify: 1,
+        rename: 1.5
+      },
+      weightDecay: {
+        intervalMs: 1000,
+        amount: 3
+      },
+      userAllowedExtensions: [],
+      suspiciousExtensions: ['locked']
+    }
+  });
+
+  emitFsEvent(eventBus, {
+    id: 'decay-1',
+    path: '/tmp/watch/decay-1.locked'
+  });
+  emitFsEvent(eventBus, {
+    id: 'decay-2',
+    path: '/tmp/watch/decay-2.locked'
+  });
+
+  assert.equal(weightUpdates.at(-1).currentWeight, 4);
+
+  ruleEngine.applyWeightDecay();
+
+  assert.equal(weightUpdates.at(-1).eventType, 'decay');
+  assert.equal(weightUpdates.at(-1).eventWeight, -3);
+  assert.equal(weightUpdates.at(-1).currentWeight, 1);
+  assert.equal(weightUpdates.at(-1).decay.intervalMs, 1000);
+
+  ruleEngine.applyWeightDecay();
+
+  assert.equal(weightUpdates.at(-1).currentWeight, 0);
+
+  ruleEngine.stop();
+});

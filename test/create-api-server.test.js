@@ -233,6 +233,8 @@ test('handleApiRequest returns detection policy settings', async () => {
   assert.equal(response.payload.weights.knownExtension, 0.1);
   assert.equal(response.payload.thresholdWeight, 10);
   assert.equal(response.payload.eventMultipliers.rename, 1.5);
+  assert.equal(response.payload.weightDecay.intervalMs, 1000);
+  assert.equal(response.payload.weightDecay.amount, 1);
 });
 
 test('handleApiRequest updates detection policy settings', async () => {
@@ -257,6 +259,10 @@ test('handleApiRequest updates detection policy settings', async () => {
           modify: 1.1,
           rename: 1.7
         },
+        weightDecay: {
+          intervalMs: 500,
+          amount: 0.5
+        },
         userAllowedExtensions: ['.backup', 'BACKUP'],
         suspiciousExtensions: ['locked']
       }
@@ -269,6 +275,8 @@ test('handleApiRequest updates detection policy settings', async () => {
   assert.deepEqual(response.payload.userAllowedExtensions, ['backup']);
   assert.equal(response.payload.thresholdWeight, 12);
   assert.equal(response.payload.weights.suspiciousExtension, 2.4);
+  assert.equal(response.payload.weightDecay.intervalMs, 500);
+  assert.equal(response.payload.weightDecay.amount, 0.5);
 });
 
 test('handleApiRequest resets detection policy settings', async () => {
@@ -287,6 +295,10 @@ test('handleApiRequest resets detection policy settings', async () => {
       create: 2,
       modify: 2,
       rename: 2
+    },
+    weightDecay: {
+      intervalMs: 2500,
+      amount: 3
     },
     userAllowedExtensions: ['custom'],
     suspiciousExtensions: ['customlocked']
@@ -433,6 +445,10 @@ function createRuntimeDouble() {
         modify: 1,
         rename: 1.5
       },
+      weightDecay: {
+        intervalMs: 1000,
+        amount: 1
+      },
       userAllowedExtensions: [],
       suspiciousExtensions: ['locked']
     },
@@ -470,6 +486,7 @@ function createRuntimeDouble() {
         thresholdWeight: this.detectionPolicy.thresholdWeight,
         weights: { ...this.detectionPolicy.weights },
         eventMultipliers: { ...this.detectionPolicy.eventMultipliers },
+        weightDecay: { ...this.detectionPolicy.weightDecay },
         userAllowedExtensions: [...this.detectionPolicy.userAllowedExtensions],
         suspiciousExtensions: [...this.detectionPolicy.suspiciousExtensions]
       };
@@ -503,6 +520,7 @@ function createRuntimeDouble() {
         thresholdWeight: policy.thresholdWeight,
         weights: { ...policy.weights },
         eventMultipliers: { ...policy.eventMultipliers },
+        weightDecay: { ...policy.weightDecay },
         userAllowedExtensions: [...policy.userAllowedExtensions],
         suspiciousExtensions: [...policy.suspiciousExtensions]
       };
@@ -522,6 +540,10 @@ function createRuntimeDouble() {
           create: 1,
           modify: 1,
           rename: 1.5
+        },
+        weightDecay: {
+          intervalMs: 1000,
+          amount: 1
         },
         userAllowedExtensions: [],
         suspiciousExtensions: ['locked', 'encrypted', 'warning', 'decrypt', 'ransom', 'recover', 'pay']

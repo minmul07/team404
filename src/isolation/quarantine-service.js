@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 
 import { EVENT_NAMES, INCIDENT_STATUSES } from '../shared/contracts/event-names.js';
 import { appendLog } from './quarantine-logger.js';
-import { restoreDemoEncryption } from '../simulator/demo.js';
 
 const execAsync = promisify(exec);
 
@@ -204,7 +203,6 @@ export class QuarantineService {
         });
       }
 
-      const decryptResult = restoreDemoEncryption(record.rootPath);
       const fileEntryCount = countFileEntries(record.entries);
 
       this.quarantineRecords.delete(incidentId);
@@ -216,7 +214,7 @@ export class QuarantineService {
         restoredAt: new Date().toISOString(),
         entryCount: fileEntryCount,
         permissionEntryCount: record.entries.length,
-        decryptedFileCount: decryptResult.restoredCount
+        decryptedFileCount: 0
       };
 
       // 상태: RESTORED

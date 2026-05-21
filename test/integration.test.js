@@ -118,11 +118,12 @@ test('integration: detection-to-quarantine-to-restore flow', async () => {
     assert.ok(captured.restoreCompleted, 'RESTORE_COMPLETED should be emitted');
     assert.equal(restoreResult.entryCount, 3);
     assert.equal(restoreResult.permissionEntryCount, 5);
-    assert.equal(restoreResult.decryptedFileCount, 1);
-    assert.equal(await fs.readFile(path.join(tempDir, 'subdir', 'secret.txt'), 'utf8'), 'secret payload');
-    await assert.rejects(
-      fs.access(path.join(tempDir, 'subdir', 'secret.txt.demo.locked'))
+    assert.equal(restoreResult.decryptedFileCount, 0);
+    assert.equal(
+      await fs.readFile(path.join(tempDir, 'subdir', 'secret.txt.demo.locked'), 'utf8'),
+      Buffer.from('secret payload').toString('base64')
     );
+    await assert.rejects(fs.access(path.join(tempDir, 'subdir', 'secret.txt')));
 
     const restoredIncident = runtime.incidentStore.getIncidents().find(i => i.id === incident.id);
     assert.equal(restoredIncident.status, 'restored', 'Incident status should be restored');

@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import { createRuntime } from '../src/app/runtime.js';
+import { EVENT_NAMES } from '../src/shared/contracts/event-names.js';
 
 const PROJECT_ROOT = process.cwd();
 const DEMO_TARGET_ROOT = `${PROJECT_ROOT}/tmp/demo-target`;
@@ -216,3 +218,99 @@ test('runtime snapshot includes recursive file count for active watch target', a
     await fs.rm(rootPath, { recursive: true, force: true });
   }
 });
+
+test('startDemo runs worker child and republishes worker file events', async () => {
+  const worker = createFakeDemoWorker();
+  const runtime = createRuntime(createConfig(), {
+    watchOptions: { demo: true },
+    demoProcessFactory: () => worker
+  });
+  let fsEvent = null;
+
+  runtime.eventBus.once(EVENT_NAMES.FS_EVENT, (event) => {
+    fsEvent = event;
+  });
+
+  const snapshot = await runtime.startDemo();
+
+  assert.equal(snapshot.demo.status, 'running');
+  assert.equal(snapshot.demo.workerPid, worker.pid);
+
+  worker.emit('message', {
+    type: 'fs_event',
+    payload: {
+      eventType: 'modify',
+      filePath: path.join(DEMO_TARGET_ROOT, 'file_1.txt')
+    }
+  });
+
+  assert.equal(fsEvent.type, 'modify');
+  assert.equal(fsEvent.path, path.join(DEMO_TARGET_ROOT, 'file_1.txt'));
+  assert.equal(fsEvent.monitorRootPath, DEMO_TARGET_ROOT);
+});
+
+test('startDemo maps worker blocked message to DEMO_ABORTED details', async () => {
+  const worker = createFakeDemoWorker();
+  const runtime = createRuntime(createConfig(), {
+    watchOptions: { demo: true },
+    demoProcessFactory: () => worker
+  });
+  let aborted = null;
+
+  runtime.eventBus.once(EVENT_NAMES.DEMO_ABORTED, (event) => {
+    aborted = event;
+  });
+
+  await runtime.startDemo();
+  worker.emit('message', {
+    type: 'blocked',
+    payload: {
+      blockedPath: path.join(DEMO_TARGET_ROOT, 'file_4.txt'),
+      blockedIndex: 4,
+      errorCode: 'EACCES',
+      errorMessage: 'permission denied',
+      reason: 'Permission denied (EACCES) while writing file_4.txt'
+    }
+  });
+
+  const snapshot = runtime.getSnapshot();
+  assert.equal(snapshot.demo.status, 'failed');
+  assert.equal(snapshot.demo.lastError, 'Permission denied (EACCES) while writing file_4.txt');
+  assert.equal(snapshot.demo.blockedPath, path.join(DEMO_TARGET_ROOT, 'file_4.txt'));
+  assert.equal(snapshot.demo.blockedIndex, 4);
+  assert.equal(snapshot.demo.errorCode, 'EACCES');
+  assert.equal(aborted.blockedPath, path.join(DEMO_TARGET_ROOT, 'file_4.txt'));
+});
+
+test('stopDemo sends abort to running worker', async () => {
+  const worker = createFakeDemoWorker();
+  const runtime = createRuntime(createConfig(), {
+    watchOptions: { demo: true },
+    demoProcessFactory: () => worker
+  });
+
+  await runtime.startDemo();
+  const snapshot = await runtime.stopDemo();
+
+  assert.equal(snapshot.demo.status, 'stopping');
+  assert.deepEqual(worker.sentMessages, [{ type: 'abort' }]);
+
+  worker.emit('message', { type: 'aborted', payload: { status: 'aborted' } });
+  assert.equal(runtime.getSnapshot().demo.status, 'aborted');
+});
+
+function createFakeDemoWorker() {
+  const worker = new EventEmitter();
+  worker.pid = 4242;
+  worker.stderr = new EventEmitter();
+  worker.sentMessages = [];
+  worker.killedSignals = [];
+  worker.send = (message) => {
+    worker.sentMessages.push(message);
+  };
+  worker.kill = (signal) => {
+    worker.killedSignals.push(signal);
+    worker.killed = true;
+  };
+  return worker;
+}

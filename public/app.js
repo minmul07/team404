@@ -28,6 +28,10 @@ const DEFAULT_DETECTION_POLICY = {
     modify: 1,
     rename: 1.5
   },
+  weightDecay: {
+    intervalMs: 1000,
+    amount: 1
+  },
   userAllowedExtensions: [],
   suspiciousExtensions: ['locked', 'encrypted', 'warning', 'decrypt', 'ransom', 'recover', 'pay']
 };
@@ -41,16 +45,23 @@ const socketProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
 const socket = new WebSocket(`${socketProtocol}://${window.location.host}`);
 
 socket.onopen = () => {
-  setServerStatus('online', '서버 연결됨 (운영 중)');
+  setServerStatus('online', '메인 서버 연결됨 (감시 및 격리)');
 };
 
 socket.onclose = () => {
-  setServerStatus('offline', '서버 연결 끊김');
+  setServerStatus('offline', '메인 서버 연결 끊김');
+  setDemoServerStatus('offline', '데모 서버 연결 끊김');
 };
 
 socket.onmessage = (event) => {
   const msg = JSON.parse(event.data);
   switch (msg.type) {
+    case 'CONNECTED':
+      updateDemoServerStatus({ demo: msg.payload?.demo });
+      break;
+    case 'SYSTEM_HEALTH':
+      setServerStatus('online', '메인 서버 연결됨 (감시 및 격리)');
+      break;
     case 'RULE_WEIGHT_UPDATED':
       cacheRuleWeight(msg.payload);
       latestRuleWeight = normalizeRuleWeight(msg.payload);
@@ -81,6 +92,41 @@ function setServerStatus(status, label) {
   if (text) text.innerText = label;
 }
 
+function setDemoServerStatus(status, label) {
+  const dot = document.getElementById('demo-status-dot');
+  const text = document.getElementById('demo-server-status-text');
+  if (dot) dot.className = `dot ${status}`;
+  if (text) text.innerText = label;
+}
+
+function updateDemoServerStatus(snapshot = {}) {
+  const demo = snapshot.demo ?? {};
+  const warning = demo.privilegeWarning;
+
+  if (demo.status === 'running' || demo.status === 'stopping') {
+    const pid = demo.workerPid ? `PID ${demo.workerPid}` : '';
+    const uid = Number.isInteger(demo.runAsUid) ? `UID ${demo.runAsUid}` : '';
+    const suffix = [pid, uid].filter(Boolean).join(' / ');
+    setDemoServerStatus(
+      warning ? 'warning' : 'online',
+      warning ? '데모 서버 실행 중 (권한 분리 비활성)' : `데모 서버 실행 중${suffix ? ` (${suffix})` : ''}`
+    );
+    return;
+  }
+
+  if (demo.status === 'failed') {
+    setDemoServerStatus('warning', '데모 서버 중단됨');
+    return;
+  }
+
+  if (warning) {
+    setDemoServerStatus('warning', '데모 서버 대기 (권한 분리 비활성)');
+    return;
+  }
+
+  setDemoServerStatus('idle', '데모 서버 대기');
+}
+
 
 async function loadState() {
   try {
@@ -97,6 +143,7 @@ async function loadState() {
     const wCount = document.getElementById('watching-count');
     if (wCount) wCount.innerText = String(snapshot.watchedFileCount ?? 0);
 
+    updateDemoServerStatus(snapshot);
     updateWatchButtonLabel(snapshot.watchEnabled);
     updateWatchTargetControls(snapshot);
     updateDemoControls(snapshot);
@@ -523,6 +570,10 @@ function normalizeClientDetectionPolicy(policy = {}) {
       modify: readPolicyNumber(source.eventMultipliers?.modify, DEFAULT_DETECTION_POLICY.eventMultipliers.modify),
       rename: readPolicyNumber(source.eventMultipliers?.rename, DEFAULT_DETECTION_POLICY.eventMultipliers.rename)
     },
+    weightDecay: {
+      intervalMs: readPolicyNumber(source.weightDecay?.intervalMs, DEFAULT_DETECTION_POLICY.weightDecay.intervalMs),
+      amount: readPolicyNumber(source.weightDecay?.amount, DEFAULT_DETECTION_POLICY.weightDecay.amount)
+    },
     userAllowedExtensions: normalizeClientExtensionList(source.userAllowedExtensions),
     suspiciousExtensions: normalizeClientExtensionList(
       source.suspiciousExtensions,
@@ -562,6 +613,7 @@ function cloneDetectionPolicy(policy) {
     thresholdWeight: policy.thresholdWeight,
     weights: { ...policy.weights },
     eventMultipliers: { ...policy.eventMultipliers },
+    weightDecay: { ...policy.weightDecay },
     userAllowedExtensions: [...policy.userAllowedExtensions],
     suspiciousExtensions: [...policy.suspiciousExtensions]
   };
@@ -843,7 +895,7 @@ function getStatusLabel(status) {
     quarantining: '격리 중',
     quarantined: '격리됨',
     failed: '실패',
-    restored: '복구됨'
+    restored: '권한 복구됨'
   };
   return labels[status] ?? status;
 }
@@ -1167,11 +1219,11 @@ async function checkHealth() {
   try {
     await fetch(`${API_URL}/health`);
     const text = document.getElementById('server-status-text');
-    if (text && text.innerText === '서버 연결 중...') {
-      setServerStatus('online', '서버 연결됨');
+    if (text && text.innerText === '메인 서버 연결 중...') {
+      setServerStatus('online', '메인 서버 연결됨 (감시 및 격리)');
     }
   } catch {
-    setServerStatus('offline', '서버 연결 끊김');
+    setServerStatus('offline', '메인 서버 연결 끊김');
   }
 }
 

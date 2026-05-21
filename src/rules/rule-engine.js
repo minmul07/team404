@@ -18,6 +18,7 @@ export class RuleEngine {
     this.bucketsByTargetSecond = new Map();
     this.lastMatchAt = null;
     this.activeRuleSettings = null;
+    this.decayTimer = null;
 
     this.updateDetectionPolicy(config.detectionPolicy);
 
@@ -27,6 +28,7 @@ export class RuleEngine {
 
   stop() {
     this.eventBus.off(EVENT_NAMES.FS_EVENT, this.handleFsEvent);
+    this.stopDecayTimer();
   }
 
   getState() {
@@ -39,6 +41,7 @@ export class RuleEngine {
           ruleId: BURST_RULE_ID,
           eventTypes: [...DETECTABLE_EVENT_TYPES],
           thresholdWeight,
+          weightDecay: this.getWeightDecay(),
           bucketMs: BUCKET_MS,
           severity: 'critical',
           autoQuarantine: true
@@ -53,6 +56,7 @@ export class RuleEngine {
       detectionPolicy,
       customExtensionWeights: this.config.customExtensionWeights
     });
+    this.restartDecayTimer();
   }
 
   handleFsEvent(event) {
@@ -72,6 +76,8 @@ export class RuleEngine {
     bucket.totalWeight += weight;
     bucket.events.push(event);
     bucket.extensions.push(extension);
+    bucket.lastEvent = event;
+    bucket.lastEventWeight = weight;
     this.bucketsByTargetSecond.set(bucketKey, bucket);
     this.cleanupOldBuckets(targetKey, bucketSecond);
 
@@ -135,6 +141,76 @@ export class RuleEngine {
   getThresholdWeight() {
     return this.activeRuleSettings?.detectionPolicy?.thresholdWeight ?? 10;
   }
+
+  getWeightDecay() {
+    return this.activeRuleSettings?.detectionPolicy?.weightDecay ?? {
+      intervalMs: 1000,
+      amount: 1
+    };
+  }
+
+  restartDecayTimer() {
+    this.stopDecayTimer();
+
+    const decay = this.getWeightDecay();
+    if (!Number.isFinite(decay.amount) || decay.amount <= 0) {
+      return;
+    }
+
+    this.decayTimer = setInterval(() => {
+      this.applyWeightDecay();
+    }, decay.intervalMs);
+    this.decayTimer.unref?.();
+  }
+
+  stopDecayTimer() {
+    if (this.decayTimer) {
+      clearInterval(this.decayTimer);
+      this.decayTimer = null;
+    }
+  }
+
+  applyWeightDecay() {
+    const decay = this.getWeightDecay();
+    const now = Date.now();
+    const observedAt = new Date(now).toISOString();
+    const thresholdWeight = this.getThresholdWeight();
+
+    for (const [bucketKey, bucket] of this.bucketsByTargetSecond) {
+      if (bucket.totalWeight <= 0) {
+        this.bucketsByTargetSecond.delete(bucketKey);
+        continue;
+      }
+
+      const nextWeight = Math.max(0, bucket.totalWeight - decay.amount);
+      if (nextWeight === bucket.totalWeight) {
+        continue;
+      }
+
+      bucket.totalWeight = nextWeight;
+      this.eventBus.emit(EVENT_NAMES.RULE_WEIGHT_UPDATED, {
+        ruleId: BURST_RULE_ID,
+        ruleName: 'Extension Weight Burst',
+        monitorTargetId: bucket.lastEvent?.monitorTargetId,
+        monitorRootPath: bucket.lastEvent?.monitorRootPath,
+        path: bucket.lastEvent?.path,
+        eventType: 'decay',
+        eventWeight: -decay.amount,
+        currentWeight: bucket.totalWeight,
+        thresholdWeight,
+        eventCount: bucket.events.length,
+        bucketSecond: bucket.bucketSecond,
+        bucketMs: BUCKET_MS,
+        decay,
+        observedAt,
+        observedTs: now
+      });
+
+      if (bucket.totalWeight <= 0) {
+        this.bucketsByTargetSecond.delete(bucketKey);
+      }
+    }
+  }
 }
 
 function createBucket(targetKey, bucketSecond) {
@@ -143,7 +219,9 @@ function createBucket(targetKey, bucketSecond) {
     bucketSecond,
     totalWeight: 0,
     events: [],
-    extensions: []
+    extensions: [],
+    lastEvent: null,
+    lastEventWeight: 0
   };
 }
 

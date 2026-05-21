@@ -40,6 +40,7 @@ export async function loadAppConfig(options = {}) {
     },
     detectionPolicy,
     customExtensionWeights,
+    demo: normalizeDemoConfig(parsed.demo),
     meta: {
       configPath: resolvedConfigPath,
       configDir,
@@ -103,6 +104,35 @@ function normalizeCustomExtensionWeights(rawCustomExtensionWeights) {
   }
 
   return normalizedWeights;
+}
+
+function normalizeDemoConfig(rawDemoConfig = {}) {
+  const runAsUid = normalizeOptionalNonNegativeInteger(rawDemoConfig.runAsUid, 'demo.runAsUid');
+  const runAsGid = normalizeOptionalNonNegativeInteger(rawDemoConfig.runAsGid, 'demo.runAsGid');
+  const demo = {};
+
+  if (runAsUid !== undefined) {
+    demo.runAsUid = runAsUid;
+  }
+
+  if (runAsGid !== undefined) {
+    demo.runAsGid = runAsGid;
+  }
+
+  return demo;
+}
+
+function normalizeOptionalNonNegativeInteger(value, key) {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+
+  const numberValue = Number(value);
+  if (!Number.isInteger(numberValue) || numberValue < 0) {
+    throw new Error(`${key} must be a non-negative integer`);
+  }
+
+  return numberValue;
 }
 
 function normalizeRuleDefinition(rule, index) {

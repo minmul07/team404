@@ -11,6 +11,10 @@
     "modify": 1,
     "rename": 1.5
   },
+  "weightDecay": {
+    "intervalMs": 1000,
+    "amount": 1
+  },
   "userAllowedExtensions": [],
   "suspiciousExtensions": [
     "locked",

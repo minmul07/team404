@@ -88,6 +88,10 @@ test('loadAppConfig normalizes detection policy settings', async () => {
           modify: 1.1,
           rename: 1.7
         },
+        weightDecay: {
+          intervalMs: 750,
+          amount: 0.75
+        },
         userAllowedExtensions: ['.backup', 'BACKUP', 'log'],
         suspiciousExtensions: ['LOCKED']
       }
@@ -98,6 +102,8 @@ test('loadAppConfig normalizes detection policy settings', async () => {
     assert.equal(config.detectionPolicy.thresholdWeight, 14);
     assert.equal(config.detectionPolicy.weights.unknownExtension, 1.4);
     assert.equal(config.detectionPolicy.eventMultipliers.rename, 1.7);
+    assert.equal(config.detectionPolicy.weightDecay.intervalMs, 750);
+    assert.equal(config.detectionPolicy.weightDecay.amount, 0.75);
     assert.deepEqual(config.detectionPolicy.userAllowedExtensions, ['backup', 'log']);
     assert.deepEqual(config.detectionPolicy.suspiciousExtensions, ['locked']);
   } finally {

@@ -46,8 +46,8 @@ export async function startAttack(onEvent = null, options = {}) {
         fs.mkdirSync(TARGET_DIR, { recursive: true });
     }
 
-    // 새 데모 시작 시 이전 로그 초기화
-    if (fs.existsSync(LOG_FILE)) fs.unlinkSync(LOG_FILE);
+    // 새 데모 시작 시 이전 로그 초기화. worker는 tmp 디렉터리 소유자가 아닐 수 있으므로 삭제 대신 truncate한다.
+    fs.writeFileSync(LOG_FILE, '');
 
     writeLog({ event: 'demo_started', targetDir: TARGET_DIR });
 
@@ -158,7 +158,12 @@ export function restoreDemoEncryption(rootPath = TARGET_DIR, options = {}) {
     };
 }
 
-export function resetDemo() {
+export function resetDemo(options = {}) {
+    return resetDemoWithOptions(options);
+}
+
+export function resetDemoWithOptions(options = {}) {
+    const owner = normalizeOwner(options);
     restoreDemoTargetPermissions();
     fs.rmSync(TARGET_DIR, { recursive: true, force: true });
     fs.mkdirSync(TARGET_DIR, { recursive: true, mode: DEMO_DIR_MODE });
@@ -169,16 +174,81 @@ export function resetDemo() {
     }
 
     restoreDemoTargetPermissions();
+    applyDemoOwnership(TARGET_DIR, owner);
 
     if (fs.existsSync(BACKUP_FILE)) fs.unlinkSync(BACKUP_FILE);
     if (fs.existsSync(LOG_FILE)) fs.unlinkSync(LOG_FILE);
     writeLog({ event: 'demo_ready', targetDir: TARGET_DIR, totalFiles: DEMO_FILE_COUNT });
+    applyDemoSupportFileOwnership(owner);
 
     return {
         status: 'ready',
         targetDir: TARGET_DIR,
         totalFiles: DEMO_FILE_COUNT
     };
+}
+
+function normalizeOwner(options = {}) {
+    const ownerUid = Number(options.ownerUid);
+    const ownerGid = Number(options.ownerGid);
+
+    if (!Number.isInteger(ownerUid) || !Number.isInteger(ownerGid)) {
+        return null;
+    }
+
+    return {
+        uid: ownerUid,
+        gid: ownerGid
+    };
+}
+
+function applyDemoOwnership(rootPath, owner) {
+    if (!owner || process.getuid?.() !== 0 || !fs.existsSync(rootPath)) {
+        return;
+    }
+
+    chownRecursive(rootPath, owner);
+}
+
+function applyDemoSupportFileOwnership(owner) {
+    if (!owner || process.getuid?.() !== 0) {
+        return;
+    }
+
+    for (const filePath of [BACKUP_FILE, LOG_FILE]) {
+        if (!fs.existsSync(filePath)) {
+            continue;
+        }
+
+        try {
+            fs.chownSync(filePath, owner.uid, owner.gid);
+        } catch {
+            // 로그/백업 파일은 worker 편의를 위한 best-effort 소유권 조정이다.
+        }
+    }
+}
+
+function chownRecursive(rootPath, owner) {
+    try {
+        fs.chownSync(rootPath, owner.uid, owner.gid);
+    } catch {
+        return;
+    }
+
+    for (const entry of fs.readdirSync(rootPath, { withFileTypes: true })) {
+        const entryPath = path.join(rootPath, entry.name);
+
+        if (entry.isDirectory()) {
+            chownRecursive(entryPath, owner);
+            continue;
+        }
+
+        try {
+            fs.chownSync(entryPath, owner.uid, owner.gid);
+        } catch {
+            // 일부 항목 실패는 데모 초기화 전체 실패로 처리하지 않는다.
+        }
+    }
 }
 
 function restoreDemoTargetPermissions(rootPath = TARGET_DIR) {
