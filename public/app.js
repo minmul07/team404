@@ -1,4 +1,6 @@
 const API_URL = '/api';
+const THEME_STORAGE_KEY = 'sentinel-dashboard-theme';
+const DEFAULT_THEME = 'light';
 
 const VIEW_COPY = {
   dashboard: {
@@ -40,6 +42,7 @@ let detectionPolicyDraft = cloneDetectionPolicy(DEFAULT_DETECTION_POLICY);
 const pendingRuleWeightsByPath = new Map();
 let latestRuleWeight = null;
 
+applyTheme(loadThemePreference());
 
 const socketProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
 const socket = new WebSocket(`${socketProtocol}://${window.location.host}`);
@@ -99,6 +102,27 @@ function setDemoServerStatus(status, label) {
   if (text) text.innerText = label;
 }
 
+function loadThemePreference() {
+  const storedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+  return storedTheme === 'dark' ? 'dark' : DEFAULT_THEME;
+}
+
+function applyTheme(theme) {
+  const nextTheme = theme === 'dark' ? 'dark' : DEFAULT_THEME;
+  document.documentElement.dataset.theme = nextTheme;
+  document.querySelectorAll('input[name="dashboard-theme"]').forEach((input) => {
+    input.checked = input.value === nextTheme;
+  });
+}
+
+function handleThemeChange(event) {
+  const input = event.target.closest('input[name="dashboard-theme"]');
+  if (!input) return;
+  const nextTheme = input.value === 'dark' ? 'dark' : DEFAULT_THEME;
+  localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+  applyTheme(nextTheme);
+}
+
 function updateDemoServerStatus(snapshot = {}) {
   const demo = snapshot.demo ?? {};
   const warning = demo.privilegeWarning;
@@ -137,9 +161,6 @@ async function loadState() {
     const targetPath = (target?.rootPath ?? target) || '없음';
     document.getElementById('target-path').innerText = targetPath;
 
-    const qCount = document.getElementById('quarantine-count');
-    if (qCount) qCount.innerText = snapshot.quarantineJobs?.length ?? 0;
-
     const wCount = document.getElementById('watching-count');
     if (wCount) wCount.innerText = String(snapshot.watchedFileCount ?? 0);
 
@@ -147,6 +168,7 @@ async function loadState() {
     updateWatchButtonLabel(snapshot.watchEnabled);
     updateWatchTargetControls(snapshot);
     updateDemoControls(snapshot);
+    updateDemoSettingsControls(snapshot);
     updateResponsePolicyControls(snapshot.responsePolicy);
     updateDetectionPolicyControls(snapshot.detectionPolicy);
     updateRuleWeightDisplay(latestRuleWeight ?? {
@@ -231,6 +253,37 @@ function updateDemoControls(snapshot) {
   if (resetBtn) {
     resetBtn.innerText = '데모 초기화';
     resetBtn.disabled = !isDemoWatch || isRunning || isBusy;
+  }
+}
+
+function updateDemoSettingsControls(snapshot = {}) {
+  const input = document.getElementById('demo-file-count-input');
+  const saveBtn = document.getElementById('btn-demo-settings-save');
+  const status = document.getElementById('demo-settings-status');
+  const error = document.getElementById('demo-settings-error');
+  const demoStatus = snapshot.demo?.status ?? 'ready';
+  const isBusy = demoStatus === 'running' || demoStatus === 'stopping';
+  const fileCount = snapshot.demoSettings?.fileCount;
+
+  if (input && document.activeElement !== input && Number.isInteger(fileCount)) {
+    input.value = String(fileCount);
+  }
+
+  if (input) {
+    input.disabled = isBusy;
+  }
+
+  if (saveBtn) {
+    saveBtn.disabled = isBusy;
+  }
+
+  if (status) {
+    status.innerText = isBusy ? '데모 실행 중에는 변경할 수 없습니다.' : '현재 데모 설정 적용 중';
+  }
+
+  if (error) {
+    error.hidden = true;
+    error.innerText = '';
   }
 }
 
@@ -462,7 +515,7 @@ async function handleDemoReset() {
     });
 
     if (response.ok) {
-      showNotification('데모 폴더가 초기화되었습니다.');
+      showNotification('데모 폴더와 Incident 관리 항목이 초기화되었습니다.');
       await loadState();
     } else {
       const error = await response.json();
@@ -477,6 +530,58 @@ async function handleDemoReset() {
     }
     await loadState();
   }
+}
+
+async function handleDemoSettingsSave(event) {
+  event.preventDefault();
+
+  const input = document.getElementById('demo-file-count-input');
+  const saveBtn = document.getElementById('btn-demo-settings-save');
+  const fileCount = Number(input?.value);
+
+  if (!Number.isInteger(fileCount) || fileCount < 1 || fileCount > 200) {
+    showDemoSettingsError('데모 파일 개수는 1부터 200 사이의 정수여야 합니다.');
+    return;
+  }
+
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.innerText = '저장 중';
+  }
+
+  try {
+    const response = await fetch(`${API_URL}/settings/demo`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileCount })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      showDemoSettingsError(error.message || error.error || '데모 설정 저장 실패');
+      return;
+    }
+
+    const settings = await response.json();
+    updateDemoSettingsControls({ demoSettings: settings, demo: { status: 'ready' } });
+    showNotification('데모 설정이 저장되었습니다.');
+    await loadState();
+  } catch (err) {
+    console.error(err);
+    showDemoSettingsError('데모 설정 저장 중 네트워크 오류가 발생했습니다.');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerText = '저장';
+    }
+  }
+}
+
+function showDemoSettingsError(message) {
+  const error = document.getElementById('demo-settings-error');
+  if (!error) return;
+  error.hidden = false;
+  error.innerText = message;
 }
 
 async function handleResponsePolicySave(event) {
@@ -857,8 +962,6 @@ async function handleRestore(incidentId, btn) {
 
 function updateQuarantineTable(jobs) {
   const list = document.getElementById('quarantine-list');
-  const count = document.getElementById('quarantine-count');
-  if (count) count.innerText = jobs.length;
   if (!list) return;
 
   if (jobs.length === 0) {
@@ -1259,6 +1362,7 @@ document.getElementById('btn-demo-reset')?.addEventListener('click', handleDemoR
 document.getElementById('btn-watch-toggle')?.addEventListener('click', handleWatchToggle);
 document.getElementById('btn-watch-target-apply')?.addEventListener('click', handleWatchTargetApply);
 document.getElementById('response-policy-form')?.addEventListener('submit', handleResponsePolicySave);
+document.getElementById('demo-settings-form')?.addEventListener('submit', handleDemoSettingsSave);
 document.getElementById('detection-policy-form')?.addEventListener('submit', handleDetectionPolicySave);
 document.getElementById('detection-policy-form')?.addEventListener('input', handleDetectionPolicyRangeInput);
 document.getElementById('detection-policy-form')?.addEventListener('input', handleDetectionPolicyNumberInput);
@@ -1272,6 +1376,9 @@ document.getElementById('allowed-extension-input')?.addEventListener('keydown', 
   }
 });
 document.getElementById('allowed-extension-list')?.addEventListener('click', handleAllowedExtensionRemove);
+document.querySelectorAll('input[name="dashboard-theme"]').forEach((radio) => {
+  radio.addEventListener('change', handleThemeChange);
+});
 document.querySelectorAll('input[name="watch-mode"]').forEach((radio) => {
   radio.addEventListener('change', handleWatchModeChange);
 });
@@ -1290,5 +1397,6 @@ document.getElementById('quarantine-list')?.addEventListener('click', (event) =>
 
 
 loadInitialState();
+applyTheme(loadThemePreference());
 checkHealth();
 setInterval(checkHealth, 5000);

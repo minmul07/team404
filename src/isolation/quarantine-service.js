@@ -262,6 +262,11 @@ export class QuarantineService {
     return jobs;
   }
 
+  clearRecords() {
+    this.quarantineRecords.clear();
+    this.inProgressIds.clear();
+  }
+
   /**
    * INCIDENT_UPDATED 이벤트 emit (quarantine 출처 표시)
    * IncidentStore 가 이 이벤트를 수신해 incident.status 를 갱신할 수 있다.

@@ -9,7 +9,7 @@ import { MonitorService } from '../collector/monitor-service.js';
 import { IncidentStore } from '../incidents/incident-store.js';
 import { RuleEngine } from '../rules/rule-engine.js';
 import { QuarantineService } from '../isolation/quarantine-service.js';
-import { resetDemo } from '../simulator/demo.js';
+import { normalizeDemoFileCount, resetDemo } from '../simulator/demo.js';
 import { EVENT_NAMES } from '../shared/contracts/event-names.js';
 import { getDefaultDetectionPolicy, normalizeDetectionPolicy } from '../shared/config/detection-policy.js';
 
@@ -149,6 +149,23 @@ export function createRuntime(config, options = {}) {
     async resetDetectionPolicy() {
       return this.updateDetectionPolicy(getDefaultDetectionPolicy());
     },
+    getDemoSettings() {
+      return {
+        fileCount: normalizeDemoFileCount(config.demo?.fileCount)
+      };
+    },
+    async updateDemoSettings(nextSettings = {}) {
+      if (state.demo.status === 'running' || state.demo.status === 'stopping') {
+        throw createRuntimeError('Demo settings cannot be changed while demo is running', 409);
+      }
+
+      config.demo = {
+        ...config.demo,
+        fileCount: normalizeDemoFileCount(nextSettings.fileCount)
+      };
+      await persistConfigSection(config.meta?.configPath, 'demo', config.demo);
+      return this.getDemoSettings();
+    },
     async startDemo() {
       const monitorHealth = monitorService.getHealth();
 
@@ -167,12 +184,14 @@ export function createRuntime(config, options = {}) {
       try {
         resetDemo({
           ownerUid: identity.runAsUid,
-          ownerGid: identity.runAsGid
+          ownerGid: identity.runAsGid,
+          fileCount: this.getDemoSettings().fileCount
         });
         worker = demoProcessFactory({
           cwd: config.meta?.projectRoot ?? process.cwd(),
           uid: identity.forkUid,
-          gid: identity.forkGid
+          gid: identity.forkGid,
+          fileCount: this.getDemoSettings().fileCount
         });
       } catch (error) {
         state.demo = {
@@ -279,8 +298,11 @@ export function createRuntime(config, options = {}) {
       const identity = resolveDemoRunIdentity(config);
       resetDemo({
         ownerUid: identity.runAsUid,
-        ownerGid: identity.runAsGid
+        ownerGid: identity.runAsGid,
+        fileCount: this.getDemoSettings().fileCount
       });
+      incidentStore.clear();
+      quarantineService.clearRecords();
       state.demo = {
         status: 'ready',
         startedAt: null,
@@ -313,6 +335,7 @@ export function createRuntime(config, options = {}) {
         activeTarget: monitorHealth.activeTarget,
         responsePolicy: this.getResponsePolicy(),
         detectionPolicy: this.getDetectionPolicy(),
+        demoSettings: this.getDemoSettings(),
         demo: toDemoSnapshot(state.demo),
         monitor: monitorHealth,
         rules: ruleEngine.getState(),
@@ -329,6 +352,7 @@ export function createRuntime(config, options = {}) {
         activeTarget: monitorHealth.activeTarget,
         responsePolicy: this.getResponsePolicy(),
         detectionPolicy: this.getDetectionPolicy(),
+        demoSettings: this.getDemoSettings(),
         demo: toDemoSnapshot(state.demo),
         watchedFileCount,
         incidents: incidentStore.getIncidents(),
@@ -416,10 +440,14 @@ function toDemoSnapshot(demo) {
   };
 }
 
-function startDemoWorker({ cwd, uid, gid }) {
+function startDemoWorker({ cwd, uid, gid, fileCount }) {
   const forkOptions = {
     cwd,
-    stdio: ['ignore', 'ignore', 'pipe', 'ipc']
+    stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+    env: {
+      ...process.env,
+      DEMO_FILE_COUNT: String(normalizeDemoFileCount(fileCount))
+    }
   };
 
   if (Number.isInteger(uid)) {

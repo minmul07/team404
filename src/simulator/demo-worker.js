@@ -1,6 +1,7 @@
-import { startAttack } from './demo.js';
+import { normalizeDemoFileCount, startAttack } from './demo.js';
 
 const controller = new AbortController();
+const fileCount = normalizeDemoFileCount(process.env.DEMO_FILE_COUNT);
 
 process.on('message', (message) => {
     if (message?.type === 'abort') {
@@ -20,7 +21,7 @@ async function runWorker() {
                     filePath
                 }
             });
-        }, { signal: controller.signal });
+        }, { signal: controller.signal, fileCount });
 
         await sendMessage({
             type: result?.status ?? 'completed',

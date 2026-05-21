@@ -85,6 +85,13 @@ export class IncidentStore {
     };
   }
 
+  clear() {
+    this.incidents = [];
+    this.alerts = [];
+    this.quarantineJobs = [];
+    this.activeIncidentIdsByTarget.clear();
+  }
+
   handleRuleMatch(match) {
     this.alerts.unshift(match);
     this.alerts = this.alerts.slice(0, 100);

@@ -56,3 +56,38 @@ test('IncidentStore preserves enriched rule_match fields across incident updates
 
   incidentStore.stop();
 });
+
+test('IncidentStore clear removes incidents alerts and quarantine jobs', () => {
+  const eventBus = createEventBus();
+  const incidentStore = new IncidentStore({ eventBus });
+
+  eventBus.emit(EVENT_NAMES.RULE_MATCH, {
+    id: 'match-1',
+    ruleId: 'burst-modify',
+    ruleName: 'Bulk Modify Burst',
+    eventType: 'modify',
+    severity: 'critical',
+    autoQuarantine: true,
+    reason: 'modify events reached 5/5 within 1000ms',
+    observedAt: '2026-04-02T00:00:00.000Z',
+    eventCount: 5,
+    samplePaths: ['/tmp/watch/a.txt'],
+    eventTypes: ['modify'],
+    monitorTargetId: 'sandbox',
+    monitorRootPath: '/tmp/watch'
+  });
+  const [incident] = incidentStore.getIncidents();
+  eventBus.emit(EVENT_NAMES.QUARANTINE_STARTED, {
+    incidentId: incident.id,
+    rootPath: '/tmp/watch',
+    status: 'quarantining'
+  });
+
+  incidentStore.clear();
+
+  assert.deepEqual(incidentStore.getIncidents(), []);
+  assert.deepEqual(incidentStore.getAlerts(), []);
+  assert.deepEqual(incidentStore.getQuarantineJobs(), []);
+
+  incidentStore.stop();
+});

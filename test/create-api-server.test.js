@@ -68,6 +68,43 @@ test('handleApiRequest stops demo through POST /api/demo/stop', async () => {
   assert.equal(response.payload.demo.status, 'aborted');
 });
 
+test('handleApiRequest returns demo settings', async () => {
+  const runtime = createRuntimeDouble();
+  const response = createResponseDouble();
+
+  await handleApiRequest({
+    runtime,
+    request: {
+      method: 'GET',
+      url: API_ROUTES.DEMO_SETTINGS,
+      headers: { host: 'localhost' }
+    },
+    response
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.payload, { fileCount: 15 });
+});
+
+test('handleApiRequest updates demo settings', async () => {
+  const runtime = createRuntimeDouble();
+  const response = createResponseDouble();
+
+  await handleApiRequest({
+    runtime,
+    request: createJsonRequest({
+      method: 'PUT',
+      url: API_ROUTES.DEMO_SETTINGS,
+      body: { fileCount: 25 }
+    }),
+    response
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(runtime.updateDemoSettingsCalls.length, 1);
+  assert.deepEqual(response.payload, { fileCount: 25 });
+});
+
 test('handleApiRequest switches watch target through POST /api/watch/target', async () => {
   const runtime = createRuntimeDouble();
   const response = createResponseDouble();
@@ -427,6 +464,10 @@ function createRuntimeDouble() {
     updateResponsePolicyCalls: [],
     updateDetectionPolicyCalls: [],
     resetDetectionPolicyCalls: 0,
+    updateDemoSettingsCalls: [],
+    demoSettings: {
+      fileCount: 15
+    },
     responsePolicy: {
       lockDirectoryPermissions: true,
       killSuspectProcesses: false,
@@ -490,6 +531,16 @@ function createRuntimeDouble() {
         userAllowedExtensions: [...this.detectionPolicy.userAllowedExtensions],
         suspiciousExtensions: [...this.detectionPolicy.suspiciousExtensions]
       };
+    },
+    getDemoSettings() {
+      return { ...this.demoSettings };
+    },
+    async updateDemoSettings(settings) {
+      this.updateDemoSettingsCalls.push(settings);
+      this.demoSettings = {
+        fileCount: Number(settings.fileCount)
+      };
+      return this.getDemoSettings();
     },
     updateResponsePolicy(policy) {
       this.updateResponsePolicyCalls.push(policy);

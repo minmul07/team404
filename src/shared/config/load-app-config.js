@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { DETECTABLE_FILE_EVENT_TYPES } from '../contracts/event-names.js';
 import { normalizeDetectionPolicy } from './detection-policy.js';
+import { normalizeDemoFileCount } from '../../simulator/demo.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -109,7 +110,9 @@ function normalizeCustomExtensionWeights(rawCustomExtensionWeights) {
 function normalizeDemoConfig(rawDemoConfig = {}) {
   const runAsUid = normalizeOptionalNonNegativeInteger(rawDemoConfig.runAsUid, 'demo.runAsUid');
   const runAsGid = normalizeOptionalNonNegativeInteger(rawDemoConfig.runAsGid, 'demo.runAsGid');
-  const demo = {};
+  const demo = {
+    fileCount: normalizeDemoFileCount(rawDemoConfig.fileCount)
+  };
 
   if (runAsUid !== undefined) {
     demo.runAsUid = runAsUid;

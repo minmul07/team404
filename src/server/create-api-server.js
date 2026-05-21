@@ -96,6 +96,16 @@ export async function handleApiRequest({ runtime, request, response }) {
     return writeJson(response, 200, normalizeDetectionPolicy(await runtime.resetDetectionPolicy()));
   }
 
+  if (request.method === 'GET' && url.pathname === API_ROUTES.DEMO_SETTINGS) {
+    return writeJson(response, 200, normalizeDemoSettings(runtime.getDemoSettings?.()));
+  }
+
+  if (request.method === 'PUT' && url.pathname === API_ROUTES.DEMO_SETTINGS) {
+    const payload = await readJsonBody(request);
+    validateDemoSettingsPayload(payload);
+    return writeJson(response, 200, normalizeDemoSettings(await runtime.updateDemoSettings(payload)));
+  }
+
   if (request.method === 'POST' && url.pathname === API_ROUTES.DEMO_START) {
     return writeJson(response, 200, await runtime.startDemo());
   }
@@ -265,6 +275,19 @@ function validateResponsePolicyPayload(payload) {
     if (typeof payload?.[field] !== 'boolean') {
       throw createBadRequest(`${field} must be boolean`);
     }
+  }
+}
+
+function normalizeDemoSettings(settings = {}) {
+  return {
+    fileCount: Number.isInteger(settings?.fileCount) ? settings.fileCount : 15
+  };
+}
+
+function validateDemoSettingsPayload(payload) {
+  const fileCount = Number(payload?.fileCount);
+  if (!Number.isInteger(fileCount) || fileCount < 1 || fileCount > 200) {
+    throw createBadRequest('demo.fileCount must be an integer between 1 and 200');
   }
 }
 

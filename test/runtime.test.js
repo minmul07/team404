@@ -108,6 +108,17 @@ test('createRuntime treats shutdown response policy as the highest cumulative st
   });
 });
 
+test('createRuntime updates demo file count settings', async () => {
+  const runtime = createRuntime(createConfig());
+
+  assert.equal(runtime.getDemoSettings().fileCount, 15);
+
+  const settings = await runtime.updateDemoSettings({ fileCount: 9 });
+
+  assert.deepEqual(settings, { fileCount: 9 });
+  assert.equal(runtime.getSnapshot().demoSettings.fileCount, 9);
+});
+
 test('createRuntime updates detection policy and persists it when configPath exists', async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'team404-runtime-config-'));
   const configPath = path.join(tempDir, 'app-config.json');

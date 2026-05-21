@@ -7,7 +7,9 @@ export const DEMO_TARGET_DIR = 'tmp/demo-target';
 const TARGET_DIR = path.resolve(DEMO_TARGET_DIR);
 const BACKUP_FILE = path.resolve('tmp/demo-backup.json');
 const LOG_FILE = path.resolve('tmp/demo-log.jsonl');
-const DEMO_FILE_COUNT = 15;
+export const DEFAULT_DEMO_FILE_COUNT = 15;
+export const MIN_DEMO_FILE_COUNT = 1;
+export const MAX_DEMO_FILE_COUNT = 200;
 const DEMO_DIR_MODE = 0o755;
 const DEMO_FILE_MODE = 0o644;
 
@@ -42,6 +44,7 @@ function appendDemoLog(line) {
 }
 
 export async function startAttack(onEvent = null, options = {}) {
+    const fileCount = normalizeDemoFileCount(options.fileCount);
     if (!fs.existsSync(TARGET_DIR)) {
         fs.mkdirSync(TARGET_DIR, { recursive: true });
     }
@@ -53,7 +56,7 @@ export async function startAttack(onEvent = null, options = {}) {
 
     const backup = {};
 
-    for (let i = 1; i <= DEMO_FILE_COUNT; i++) {
+    for (let i = 1; i <= fileCount; i++) {
         if (options.signal?.aborted) {
             fs.writeFileSync(BACKUP_FILE, JSON.stringify(backup, null, 2));
             writeLog({ event: 'demo_aborted', targetDir: TARGET_DIR });
@@ -109,8 +112,8 @@ export async function startAttack(onEvent = null, options = {}) {
     }
 
     fs.writeFileSync(BACKUP_FILE, JSON.stringify(backup, null, 2));
-    writeLog({ event: 'demo_completed', totalFiles: DEMO_FILE_COUNT });
-    return { status: 'completed', targetDir: TARGET_DIR, totalFiles: DEMO_FILE_COUNT };
+    writeLog({ event: 'demo_completed', totalFiles: fileCount });
+    return { status: 'completed', targetDir: TARGET_DIR, totalFiles: fileCount };
 }
 
 export function restoreDemo() {
@@ -163,12 +166,13 @@ export function resetDemo(options = {}) {
 }
 
 export function resetDemoWithOptions(options = {}) {
+    const fileCount = normalizeDemoFileCount(options.fileCount);
     const owner = normalizeOwner(options);
     restoreDemoTargetPermissions();
     fs.rmSync(TARGET_DIR, { recursive: true, force: true });
     fs.mkdirSync(TARGET_DIR, { recursive: true, mode: DEMO_DIR_MODE });
 
-    for (let i = 1; i <= DEMO_FILE_COUNT; i++) {
+    for (let i = 1; i <= fileCount; i++) {
         const filePath = path.join(TARGET_DIR, `file_${i}.txt`);
         fs.writeFileSync(filePath, `original content ${i}`, { mode: DEMO_FILE_MODE });
     }
@@ -178,14 +182,31 @@ export function resetDemoWithOptions(options = {}) {
 
     if (fs.existsSync(BACKUP_FILE)) fs.unlinkSync(BACKUP_FILE);
     if (fs.existsSync(LOG_FILE)) fs.unlinkSync(LOG_FILE);
-    writeLog({ event: 'demo_ready', targetDir: TARGET_DIR, totalFiles: DEMO_FILE_COUNT });
+    writeLog({ event: 'demo_ready', targetDir: TARGET_DIR, totalFiles: fileCount });
     applyDemoSupportFileOwnership(owner);
 
     return {
         status: 'ready',
         targetDir: TARGET_DIR,
-        totalFiles: DEMO_FILE_COUNT
+        totalFiles: fileCount
     };
+}
+
+export function normalizeDemoFileCount(value) {
+    if (value === undefined || value === null || value === '') {
+        return DEFAULT_DEMO_FILE_COUNT;
+    }
+
+    const fileCount = Number(value);
+    if (
+        !Number.isInteger(fileCount) ||
+        fileCount < MIN_DEMO_FILE_COUNT ||
+        fileCount > MAX_DEMO_FILE_COUNT
+    ) {
+        throw new Error(`demo.fileCount must be an integer between ${MIN_DEMO_FILE_COUNT} and ${MAX_DEMO_FILE_COUNT}`);
+    }
+
+    return fileCount;
 }
 
 function normalizeOwner(options = {}) {

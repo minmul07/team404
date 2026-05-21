@@ -111,6 +111,30 @@ test('loadAppConfig normalizes detection policy settings', async () => {
   }
 });
 
+test('loadAppConfig normalizes demo file count settings', async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'team404-config-'));
+
+  try {
+    const configPath = await writeConfig(tempDir, {
+      monitor: {
+        scriptPath: '../config/monitor.sh',
+        restartDelayMs: 1000,
+        movePairWindowMs: 500,
+        targets: [{ id: 'input-target', rootPath: './configured-watch' }]
+      },
+      demo: {
+        fileCount: 24
+      }
+    });
+
+    const config = await loadAppConfig({ configPath });
+
+    assert.equal(config.demo.fileCount, 24);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 async function writeConfig(tempDir, overrides) {
   const configPath = path.join(tempDir, 'app-config.json');
   const payload = {

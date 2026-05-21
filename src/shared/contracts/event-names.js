@@ -52,6 +52,7 @@ export const API_ROUTES = Object.freeze({
   DEMO_START: '/api/demo/start',
   DEMO_STOP: '/api/demo/stop',
   DEMO_RESET: '/api/demo/reset',
+  DEMO_SETTINGS: '/api/settings/demo',
   WATCH_TARGET: '/api/watch/target',
   RESPONSE_POLICY: '/api/settings/response-policy',
   DETECTION_POLICY: '/api/settings/detection-policy',

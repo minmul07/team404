@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>404 Team | Security Dashboard</title>
     <link rel="icon" href="data:,">
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -43,12 +44,8 @@
             </div>
         </header>
 
-        <section class="view-panel active" data-view-panel="dashboard">
-            <section class="grid-container" aria-label="주요 상태">
-                <div class="card stat-card">
-                    <h2>격리 중인 항목</h2>
-                    <p id="quarantine-count">0</p>
-                </div>
+        <section class="view-panel dashboard-view active" data-view-panel="dashboard">
+            <section class="grid-container dashboard-stats" aria-label="주요 상태">
                 <div class="card stat-card">
                     <h2>감시 중인 항목</h2>
                     <p id="watching-count">0</p>
@@ -81,26 +78,23 @@
                 </div>
             </section>
 
-            <section class="card">
+            <section class="card log-card fs-log-card">
                 <div class="section-header">
                     <h2>파일시스템 이벤트</h2>
-                    <span class="section-kicker">Live</span>
                 </div>
                 <div id="fs-event-log-container" class="log-viewer"></div>
             </section>
 
-            <section class="card">
+            <section class="card log-card incident-log-card">
                 <div class="section-header">
                     <h2>Incident 및 격리 로그</h2>
-                    <span class="section-kicker">Response</span>
                 </div>
                 <div id="incident-log-container" class="log-viewer"></div>
             </section>
 
-            <section class="card">
+            <section class="card management-card">
                 <div class="section-header">
                     <h2>Incident 및 격리 관리</h2>
-                    <span class="section-kicker">Response</span>
                 </div>
                 <div class="table-wrap">
                     <table class="data-table">
@@ -123,7 +117,6 @@
             <section class="card rules-card">
                 <div class="section-header">
                     <h2>감시 가중치</h2>
-                    <span class="section-kicker">Weights</span>
                 </div>
                 <form id="detection-policy-form" class="detection-policy-form">
                     <div class="rules-grid">
@@ -182,7 +175,6 @@
                     <div class="allowlist-editor">
                         <div class="section-header compact">
                             <h2>사용자 화이트리스트 확장자</h2>
-                            <span class="section-kicker">Allowlist</span>
                         </div>
                         <div class="extension-input-row">
                             <input id="allowed-extension-input" type="text" spellcheck="false" placeholder="예: log 또는 .backup">
@@ -204,8 +196,44 @@
         <section class="view-panel" data-view-panel="settings" hidden>
             <section class="card settings-card">
                 <div class="section-header">
+                    <h2>화면 테마</h2>
+                </div>
+                <fieldset class="theme-options" aria-label="화면 테마 선택">
+                    <label class="theme-option">
+                        <input type="radio" name="dashboard-theme" value="light">
+                        <span class="theme-copy">
+                            <strong>화이트 테마</strong>
+                        </span>
+                    </label>
+                    <label class="theme-option">
+                        <input type="radio" name="dashboard-theme" value="dark">
+                        <span class="theme-copy">
+                            <strong>다크 테마</strong>
+                        </span>
+                    </label>
+                </fieldset>
+            </section>
+
+            <section class="card settings-card">
+                <div class="section-header">
+                    <h2>데모 설정</h2>
+                </div>
+                <form id="demo-settings-form" class="demo-settings-form">
+                    <label class="demo-number-control">
+                        <span>데모 파일 개수</span>
+                        <input id="demo-file-count-input" type="number" min="1" max="200" step="1" value="15">
+                    </label>
+                    <p id="demo-settings-error" class="field-error" hidden></p>
+                    <div class="settings-actions">
+                        <button id="btn-demo-settings-save" class="btn-primary" type="submit">저장</button>
+                        <span id="demo-settings-status" class="settings-status">현재 데모 설정을 불러오는 중</span>
+                    </div>
+                </form>
+            </section>
+
+            <section class="card settings-card">
+                <div class="section-header">
                     <h2>격리 대응 단계</h2>
-                    <span class="section-kicker">Policy</span>
                 </div>
                 <form id="response-policy-form" class="response-policy-form">
                     <label class="policy-option">
