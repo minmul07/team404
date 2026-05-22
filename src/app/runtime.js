@@ -43,7 +43,8 @@ export function createRuntime(config, options = {}) {
   const monitorService = new MonitorService({
     config,
     eventBus,
-    watchOptions: options.watchOptions ?? options.watch ?? {}
+    watchOptions: options.watchOptions ?? options.watch ?? {},
+    backendFactories: options.backendFactories ?? {}
   });
   const demoProcessFactory = options.demoProcessFactory ?? startDemoWorker;
 
@@ -326,27 +327,42 @@ export function createRuntime(config, options = {}) {
       }
 
       const identity = resolveDemoRunIdentity(config);
-      resetDemo({
-        ownerUid: identity.runAsUid,
-        ownerGid: identity.runAsGid,
-        fileCount: this.getDemoSettings().fileCount
-      });
-      incidentStore.clear();
-      quarantineService.clearRecords();
-      ruleEngine.resetWeights();
-      state.demo = {
-        status: 'ready',
-        startedAt: null,
-        completedAt: null,
-        lastError: null,
-        worker: null,
-        workerPid: null,
-        runAsUid: identity.runAsUid,
-        runAsGid: identity.runAsGid,
-        privilegeWarning: identity.privilegeWarning,
-        blocked: null,
-        stopTimer: null
-      };
+      const shouldRestoreWatch = shouldPauseMonitorForDemoReset(state, monitorService.getHealth());
+
+      if (shouldRestoreWatch) {
+        emitDemoLog(eventBus, '데모 파일 세팅을 위해 감시를 중지합니다.');
+        await monitorService.stop();
+      }
+
+      try {
+        resetDemo({
+          ownerUid: identity.runAsUid,
+          ownerGid: identity.runAsGid,
+          fileCount: this.getDemoSettings().fileCount
+        });
+        incidentStore.clear();
+        quarantineService.clearRecords();
+        ruleEngine.resetWeights();
+        state.demo = {
+          status: 'ready',
+          startedAt: null,
+          completedAt: null,
+          lastError: null,
+          worker: null,
+          workerPid: null,
+          runAsUid: identity.runAsUid,
+          runAsGid: identity.runAsGid,
+          privilegeWarning: identity.privilegeWarning,
+          blocked: null,
+          stopTimer: null
+        };
+      } finally {
+        if (shouldRestoreWatch) {
+          emitDemoLog(eventBus, '데모 파일 세팅이 끝나 감시를 다시 시작합니다.');
+          await monitorService.start();
+        }
+      }
+
       return this.getSnapshot();
     },
     getHealth() {
@@ -404,6 +420,22 @@ export function createRuntime(config, options = {}) {
       return quarantineService.restore(incidentId);
     }
   };
+}
+
+function shouldPauseMonitorForDemoReset(state, monitorHealth = {}) {
+  return Boolean(
+    state.watchEnabled &&
+    monitorHealth.status !== 'idle' &&
+    monitorHealth.status !== 'stopped'
+  );
+}
+
+function emitDemoLog(eventBus, message) {
+  eventBus.emit(EVENT_NAMES.DEMO_LOG, {
+    status: 'info',
+    message,
+    observedAt: new Date().toISOString()
+  });
 }
 
 function normalizeMonitorSettings(settings = {}) {

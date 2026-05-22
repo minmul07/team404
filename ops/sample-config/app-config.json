@@ -19,11 +19,11 @@
     ]
   },
   "demo": {
-    "fileCount": 50
+    "fileCount": 30
   },
   "rules": [],
   "detectionPolicy": {
-    "thresholdWeight": 10,
+    "thresholdWeight": 12,
     "weights": {
       "knownExtension": 0.1,
       "unknownExtension": 1,

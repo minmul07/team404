@@ -140,6 +140,10 @@ export async function handleApiRequest({ runtime, request, response }) {
       throw createBadRequest('mode must be normal or demo');
     }
 
+    if (payload?.restoreDefault === true) {
+      return writeJson(response, 200, await runtime.disableDemoMode());
+    }
+
     const targetPaths = normalizeWatchTargetPaths(payload);
 
     for (const targetPath of targetPaths) {
@@ -383,6 +387,7 @@ function attachDashboardWebSocket({ server, runtime }) {
     [EVENT_NAMES.DEMO_STARTED, (payload) => broadcast({ type: 'DEMO_STARTED', payload })],
     [EVENT_NAMES.DEMO_ABORTED, (payload) => broadcast({ type: 'DEMO_ABORTED', payload })],
     [EVENT_NAMES.DEMO_COMPLETED, (payload) => broadcast({ type: 'DEMO_COMPLETED', payload })],
+    [EVENT_NAMES.DEMO_LOG, (payload) => broadcast({ type: 'DEMO_LOG', payload })],
     [EVENT_NAMES.SYSTEM_HEALTH, (payload) => broadcast({ type: 'SYSTEM_HEALTH', payload })]
   ];
 

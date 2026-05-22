@@ -200,6 +200,26 @@ test('handleApiRequest switches multiple watch targets through POST /api/watch/t
   }
 });
 
+test('handleApiRequest restores configured watch target when demo mode is disabled', async () => {
+  const runtime = createRuntimeDouble();
+  const response = createResponseDouble();
+
+  await handleApiRequest({
+    runtime,
+    request: createJsonRequest({
+      method: 'POST',
+      url: API_ROUTES.WATCH_TARGET,
+      body: { mode: 'normal', restoreDefault: true }
+    }),
+    response
+  });
+
+  assert.equal(runtime.disableDemoModeCalls, 1);
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.payload.activeMode, 'config');
+  assert.equal(response.payload.activeTarget.rootPath, '/tmp/configured-watch');
+});
+
 test('handleApiRequest rejects POST /api/watch/target without a targetPath', async () => {
   const runtime = createRuntimeDouble();
   const response = createResponseDouble();
@@ -573,6 +593,15 @@ test('createApiServer upgrades dashboard WebSocket and broadcasts runtime events
     const ruleWeightMessage = decodeWebSocketFrame(socket.chunks[5]);
     assert.equal(ruleWeightMessage.type, 'RULE_WEIGHT_UPDATED');
     assert.equal(ruleWeightMessage.payload.currentWeight, 4);
+
+    runtime.eventBus.emit(EVENT_NAMES.DEMO_LOG, {
+      status: 'info',
+      message: '데모 파일 세팅을 위해 감시를 중지합니다.'
+    });
+
+    const demoLogMessage = decodeWebSocketFrame(socket.chunks[6]);
+    assert.equal(demoLogMessage.type, 'DEMO_LOG');
+    assert.equal(demoLogMessage.payload.message, '데모 파일 세팅을 위해 감시를 중지합니다.');
   } finally {
     server.emit('close');
   }

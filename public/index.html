@@ -28,6 +28,11 @@
                 <p id="view-subtitle">파일 이벤트와 격리 상태를 실시간으로 확인합니다.</p>
             </div>
             <div class="topbar-actions">
+                <label class="demo-mode-toggle" for="demo-mode-toggle-input">
+                    <input id="demo-mode-toggle-input" type="checkbox">
+                    <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+                    <span>데모 모드</span>
+                </label>
                 <div class="status-group">
                     <span id="status-dot" class="dot offline"></span>
                     <span id="server-status-text">메인 서버 연결 중...</span>
@@ -37,7 +42,7 @@
                     <span id="demo-server-status-text">데모 서버 대기</span>
                 </div>
                 <button id="btn-watch-toggle" class="btn-watch-toggle" type="button">감시 시작</button>
-                <div class="controls">
+                <div id="demo-controls" class="controls demo-controls" aria-hidden="true">
                     <button id="btn-demo-action" class="btn-primary" type="button">데모 시작</button>
                     <button id="btn-demo-reset" class="btn-secondary" type="button">데모 초기화</button>
                 </div>
@@ -60,16 +65,6 @@
                 <div class="card stat-card">
                     <h2>감시 디렉터리</h2>
                     <p id="target-path">-</p>
-                    <fieldset class="watch-mode-group" aria-label="감시 디렉터리 모드">
-                        <label class="radio-option">
-                            <input type="radio" name="watch-mode" value="normal" checked>
-                            <span>일반 감시</span>
-                        </label>
-                        <label class="radio-option">
-                            <input type="radio" name="watch-mode" value="demo">
-                            <span>데모 폴더 감시</span>
-                        </label>
-                    </fieldset>
                     <div id="watch-target-list" class="watch-path-list">
                         <div class="watch-path-row" data-watch-path-row>
                             <input class="watch-target-input" type="text" spellcheck="false" placeholder="/path/to/watch">
@@ -85,6 +80,7 @@
             <section class="card log-card fs-log-card">
                 <div class="section-header">
                     <h2>파일시스템 이벤트</h2>
+                    <button class="btn-log-clear" type="button" data-log-clear-target="fs-event-log-container" data-tooltip="클릭하면 이 로그만 초기화합니다. Shift+클릭하면 모든 로그를 초기화합니다." title="클릭하면 이 로그만 초기화합니다. Shift+클릭하면 모든 로그를 초기화합니다.">로그 초기화</button>
                 </div>
                 <div id="fs-event-log-container" class="log-viewer"></div>
             </section>
@@ -92,8 +88,17 @@
             <section class="card log-card incident-log-card">
                 <div class="section-header">
                     <h2>Incident 및 격리 로그</h2>
+                    <button class="btn-log-clear" type="button" data-log-clear-target="incident-log-container" data-tooltip="클릭하면 이 로그만 초기화합니다. Shift+클릭하면 모든 로그를 초기화합니다." title="클릭하면 이 로그만 초기화합니다. Shift+클릭하면 모든 로그를 초기화합니다.">로그 초기화</button>
                 </div>
                 <div id="incident-log-container" class="log-viewer"></div>
+            </section>
+
+            <section id="demo-log-card" class="card log-card demo-log-card" hidden>
+                <div class="section-header">
+                    <h2>데모 로그</h2>
+                    <button class="btn-log-clear" type="button" data-log-clear-target="demo-log-container" data-tooltip="클릭하면 이 로그만 초기화합니다. Shift+클릭하면 모든 로그를 초기화합니다." title="클릭하면 이 로그만 초기화합니다. Shift+클릭하면 모든 로그를 초기화합니다.">로그 초기화</button>
+                </div>
+                <div id="demo-log-container" class="log-viewer"></div>
             </section>
 
             <section class="card management-card">

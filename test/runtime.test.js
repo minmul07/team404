@@ -191,6 +191,63 @@ test('resetDemo clears current rule weights', async () => {
   await runtime.stop();
 });
 
+
+test('resetDemo pauses and restores active monitoring while preparing demo files', async () => {
+  const auditdBackends = [];
+  const runtime = createRuntime(createConfig(), {
+    backendFactories: {
+      auditd: createRuntimeBackendFactory('auditd', auditdBackends)
+    }
+  });
+  const demoLogs = [];
+  const healthStatuses = [];
+  runtime.eventBus.on(EVENT_NAMES.DEMO_LOG, (payload) => {
+    demoLogs.push(payload);
+  });
+  runtime.eventBus.on(EVENT_NAMES.SYSTEM_HEALTH, (payload) => {
+    healthStatuses.push(payload.status);
+  });
+
+  await runtime.start();
+  await runtime.resetDemo();
+
+  assert.equal(auditdBackends[0].stopCalls, 1);
+  assert.equal(auditdBackends.length, 2);
+  assert.equal(auditdBackends[1].startCalls, 1);
+  assert.deepEqual(demoLogs.map((entry) => entry.message), [
+    '데모 파일 세팅을 위해 감시를 중지합니다.',
+    '데모 파일 세팅이 끝나 감시를 다시 시작합니다.'
+  ]);
+  assert.ok(healthStatuses.includes('stopped'));
+  assert.equal(runtime.getSnapshot().health.status, 'running');
+
+  await runtime.stop();
+});
+
+test('resetDemo does not restart monitoring when watch is already stopped', async () => {
+  const auditdBackends = [];
+  const runtime = createRuntime(createConfig(), {
+    backendFactories: {
+      auditd: createRuntimeBackendFactory('auditd', auditdBackends)
+    }
+  });
+  const demoLogs = [];
+  runtime.eventBus.on(EVENT_NAMES.DEMO_LOG, (payload) => {
+    demoLogs.push(payload);
+  });
+
+  await runtime.start();
+  await runtime.stopWatch();
+  await runtime.resetDemo();
+
+  assert.equal(auditdBackends[0].stopCalls, 1);
+  assert.equal(auditdBackends.length, 1);
+  assert.equal(demoLogs.length, 0);
+  assert.equal(runtime.getSnapshot().health.status, 'stopped');
+
+  await runtime.stop();
+});
+
 test('createRuntime updates detection policy and persists it when configPath exists', async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'team404-runtime-config-'));
   const configPath = path.join(tempDir, 'app-config.json');
@@ -598,4 +655,36 @@ function createFakeDemoWorker() {
     worker.killed = true;
   };
   return worker;
+}
+
+function createRuntimeBackendFactory(name, store) {
+  return ({ onHealth }) => {
+    const backend = {
+      startCalls: 0,
+      stopCalls: 0,
+      status: 'idle',
+      async start() {
+        this.startCalls += 1;
+        this.status = 'running';
+        onHealth(this.getHealth());
+      },
+      async stop() {
+        this.stopCalls += 1;
+        this.status = 'stopped';
+        onHealth(this.getHealth());
+      },
+      getHealth() {
+        return {
+          name,
+          status: this.status,
+          pid: this.status === 'running' ? 4242 : null,
+          lastEventAt: null,
+          lastError: null,
+          restartCount: 0
+        };
+      }
+    };
+    store.push(backend);
+    return backend;
+  };
 }

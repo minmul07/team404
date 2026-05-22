@@ -14,6 +14,7 @@ export const EVENT_NAMES = Object.freeze({
   DEMO_STARTED: 'demo_started',
   DEMO_ABORTED: 'demo_aborted',
   DEMO_COMPLETED: 'demo_completed',
+  DEMO_LOG: 'demo_log',
   SYSTEM_HEALTH: 'system_health'
 });
 

@@ -43,6 +43,7 @@ const pendingRuleWeightsByPath = new Map();
 let latestRuleWeight = null;
 let latestSnapshot = null;
 let latestResponsePolicy = null;
+let latestLoggedMonitorStatus = null;
 
 applyTheme(loadThemePreference());
 
@@ -67,6 +68,7 @@ socket.onmessage = (event) => {
       break;
     case 'SYSTEM_HEALTH':
       updateMonitorBackendStatus(msg.payload?.details ?? msg.payload);
+      appendMonitorHealthLog(msg.payload?.details ?? msg.payload);
       break;
     case 'RULE_WEIGHT_UPDATED':
       cacheRuleWeight(msg.payload);
@@ -81,11 +83,15 @@ socket.onmessage = (event) => {
     case 'QUARANTINE_COMPLETED':
     case 'QUARANTINE_FAILED':
     case 'RESTORE_COMPLETED':
+      appendIncidentEntry(normalizeIncidentEvent(msg));
+      loadState(); // refresh stats + quarantine table
+      break;
     case 'DEMO_STARTED':
     case 'DEMO_ABORTED':
     case 'DEMO_COMPLETED':
-      appendIncidentEntry(normalizeIncidentEvent(msg));
-      loadState(); // refresh stats + quarantine table
+    case 'DEMO_LOG':
+      appendDemoLogEntry(normalizeIncidentEvent(msg));
+      loadState();
       break;
   }
 };
@@ -246,24 +252,37 @@ function updateWatchButtonLabel(enabled) {
 }
 
 function updateWatchTargetControls(snapshot) {
-  const mode = snapshot.activeMode === 'demo' ? 'demo' : 'normal';
+  const isDemoMode = snapshot.activeMode === 'demo';
   const applyBtn = document.getElementById('btn-watch-target-apply');
   const error = document.getElementById('watch-target-error');
   const targetPaths = getSnapshotTargetPaths(snapshot);
 
-  document.querySelectorAll('input[name="watch-mode"]').forEach((radio) => {
-    radio.checked = radio.value === mode;
-  });
-
-  renderWatchTargetRows(targetPaths, mode === 'demo');
+  updateDemoModeUi(isDemoMode);
+  renderWatchTargetRows(targetPaths, isDemoMode);
 
   if (applyBtn) {
-    applyBtn.disabled = mode === 'demo';
+    applyBtn.disabled = isDemoMode;
   }
 
   if (error) {
     error.hidden = true;
     error.innerText = '';
+  }
+}
+
+function updateDemoModeUi(isDemoMode) {
+  const dashboard = document.querySelector('.dashboard-view');
+  const demoLogCard = document.getElementById('demo-log-card');
+  const toggle = document.getElementById('demo-mode-toggle-input');
+
+  dashboard?.classList.toggle('demo-mode-active', isDemoMode);
+
+  if (demoLogCard) {
+    demoLogCard.hidden = !isDemoMode;
+  }
+
+  if (toggle) {
+    toggle.checked = isDemoMode;
   }
 }
 
@@ -317,10 +336,16 @@ function renderWatchTargetRows(targetPaths, disabled = false) {
 function updateDemoControls(snapshot) {
   const actionBtn = document.getElementById('btn-demo-action');
   const resetBtn = document.getElementById('btn-demo-reset');
+  const controls = document.getElementById('demo-controls');
   const demoStatus = snapshot.demo?.status ?? 'ready';
   const isDemoWatch = snapshot.activeMode === 'demo';
   const isRunning = demoStatus === 'running';
   const isBusy = demoStatus === 'stopping';
+
+  if (controls) {
+    controls.classList.toggle('active', isDemoWatch);
+    controls.setAttribute('aria-hidden', String(!isDemoWatch));
+  }
 
   if (actionBtn) {
     if (isRunning) {
@@ -568,25 +593,27 @@ async function handleWatchToggle() {
   }
 }
 
-async function handleWatchModeChange(event) {
-  const mode = event.target?.value;
+async function handleDemoModeToggle(event) {
+  const toggle = event.target;
+  const enabled = Boolean(toggle?.checked);
   clearWatchTargetError();
 
-  if (mode === 'demo') {
-    await updateWatchTarget({ mode: 'demo' });
-    return;
+  if (toggle) toggle.disabled = true;
+  const ok = await updateWatchTarget(enabled
+    ? { mode: 'demo' }
+    : { mode: 'normal', restoreDefault: true });
+
+  if (!ok) {
+    await loadState();
   }
 
-  if (mode === 'normal') {
-    await handleWatchTargetApply();
-  }
+  if (toggle) toggle.disabled = false;
 }
 
 async function handleWatchTargetApply() {
-  const selectedMode = document.querySelector('input[name="watch-mode"]:checked')?.value ?? 'normal';
   const targetPaths = collectWatchTargetPaths();
 
-  if (selectedMode !== 'normal') {
+  if (latestSnapshot?.activeMode === 'demo') {
     return;
   }
 
@@ -600,7 +627,9 @@ async function handleWatchTargetApply() {
 
 async function updateWatchTarget(payload) {
   const applyBtn = document.getElementById('btn-watch-target-apply');
+  const demoModeToggle = document.getElementById('demo-mode-toggle-input');
   if (applyBtn) applyBtn.disabled = true;
+  if (demoModeToggle) demoModeToggle.disabled = true;
 
   try {
     const response = await fetch(`${API_URL}/watch/target`, {
@@ -611,9 +640,11 @@ async function updateWatchTarget(payload) {
 
     if (response.ok) {
       clearWatchTargetError();
-      showNotification(payload.mode === 'demo' ? '데모 폴더 감시로 변경되었습니다.' : '감시 디렉터리가 변경되었습니다.');
+      showNotification(payload.mode === 'demo'
+        ? '데모 모드가 활성화되었습니다.'
+        : (payload.restoreDefault ? '일반 감시로 변경되었습니다.' : '감시 디렉터리가 변경되었습니다.'));
       await loadState();
-      return;
+      return true;
     }
 
     const error = await response.json();
@@ -621,11 +652,14 @@ async function updateWatchTarget(payload) {
       ? '존재하지 않는 디렉터리입니다.'
       : (error.message || error.error || '감시 디렉터리 변경 실패');
     showWatchTargetError(message);
+    return false;
   } catch (err) {
     console.error(err);
     showWatchTargetError('감시 디렉터리 변경 중 네트워크 오류가 발생했습니다.');
+    return false;
   } finally {
-    if (applyBtn) applyBtn.disabled = false;
+    if (applyBtn) applyBtn.disabled = latestSnapshot?.activeMode === 'demo';
+    if (demoModeToggle) demoModeToggle.disabled = false;
   }
 }
 
@@ -1266,6 +1300,31 @@ function getStatusLabel(status) {
 }
 
 
+const LOG_CONTAINER_IDS = [
+  'fs-event-log-container',
+  'incident-log-container',
+  'demo-log-container'
+];
+
+function clearLogContainer(targetId) {
+  const container = document.getElementById(targetId);
+  if (!container) return;
+
+  container.innerHTML = '<div class="empty-state">로그가 초기화되었습니다.</div>';
+}
+
+function handleLogClear(event) {
+  const btn = event.target.closest('[data-log-clear-target]');
+  if (!btn) return;
+
+  if (event.shiftKey) {
+    LOG_CONTAINER_IDS.forEach(clearLogContainer);
+    return;
+  }
+
+  clearLogContainer(btn.dataset.logClearTarget);
+}
+
 function appendFsEventEntry(entry) {
   const container = document.getElementById('fs-event-log-container');
   if (!container) return;
@@ -1294,6 +1353,26 @@ function appendFsEventEntry(entry) {
 }
 
 
+function appendMonitorHealthLog(health = {}) {
+  const status = health.status;
+  if (status !== 'running' && status !== 'stopped') {
+    return;
+  }
+
+  if (latestLoggedMonitorStatus === status) {
+    return;
+  }
+
+  latestLoggedMonitorStatus = status;
+  appendFsEventEntry({
+    _type: 'monitor',
+    eventType: status === 'running' ? 'monitor_started' : 'monitor_stopped',
+    path: status === 'running' ? '감시가 시작됨' : '감시가 중지됨',
+    observedAt: new Date().toISOString(),
+    backend: health.activeBackend ?? health.requestedBackend ?? null
+  });
+}
+
 function appendIncidentEntry(entry) {
   const container = document.getElementById('incident-log-container');
   if (!container) return;
@@ -1312,13 +1391,23 @@ function appendIncidentEntry(entry) {
     case 'restore':
       html = renderRestoreEntry(entry);
       break;
-    case 'demo':
-      html = renderDemoEntry(entry);
-      break;
     default:
       html = renderAlertEntry(entry);
   }
 
+  prependLogEntry(container, html);
+}
+
+function appendDemoLogEntry(entry) {
+  const container = document.getElementById('demo-log-container');
+  if (!container) return;
+
+  const empty = container.querySelector('.empty-state');
+  if (empty) empty.remove();
+  prependLogEntry(container, renderDemoEntry(entry));
+}
+
+function prependLogEntry(container, html) {
   const el = document.createElement('div');
   el.innerHTML = html;
   const child = el.firstElementChild;
@@ -1417,6 +1506,13 @@ function normalizeIncidentEvent(msg) {
         rootPaths: payload.rootPaths ?? [],
         observedAt: payload.observedAt ?? new Date().toISOString()
       };
+    case 'DEMO_LOG':
+      return {
+        _type: 'demo',
+        status: payload.status ?? 'info',
+        reason: payload.message ?? payload.reason,
+        observedAt: payload.observedAt ?? new Date().toISOString()
+      };
     case 'DEMO_STARTED':
     case 'DEMO_ABORTED':
     case 'DEMO_COMPLETED':
@@ -1451,7 +1547,7 @@ function renderRestoreEntry(entry) {
 function renderDemoEntry(entry) {
   const time = formatTime(entry.observedAt);
   const statusLabel = getDemoStatusLabel(entry.status);
-  const severityClass = entry.status === 'completed' ? 'success' : entry.status === 'failed' ? 'error' : 'low';
+  const severityClass = entry.status === 'completed' ? 'success' : entry.status === 'failed' ? 'error' : entry.status === 'info' ? 'info' : 'low';
 
   return `
     <div class="log-entry alert-demo">
@@ -1574,7 +1670,8 @@ function getDemoStatusLabel(status) {
     aborted: '데모 중단',
     completed: '데모 완료',
     failed: '데모 실패',
-    ready: '데모 대기'
+    ready: '데모 대기',
+    info: '데모 안내'
   };
   return labels[status] ?? '데모 상태';
 }
@@ -1586,7 +1683,8 @@ function getSeverityLabel(severity) {
     medium: '보통',
     low: '낮음',
     success: '성공',
-    error: '오류'
+    error: '오류',
+    info: '안내'
   };
   return labels[severity] ?? severity;
 }
@@ -1612,10 +1710,19 @@ function formatRootPaths(rootPaths = [], fallback = '-') {
   return `${paths[0]} 외 ${paths.length - 1}개`;
 }
 
+function getFileEventTypeLabel(eventType) {
+  const labels = {
+    monitor_started: '감시 시작',
+    monitor_stopped: '감시 중지'
+  };
+  const normalized = String(eventType ?? 'event').toLowerCase();
+  return labels[normalized] ?? normalized.toUpperCase();
+}
+
 function renderFileEventEntry(entry) {
   const time = formatTime(entry.observedAt);
-  const type = String(entry.eventType ?? 'event').toUpperCase();
-  const typeClass = `file-${type.toLowerCase()}`;
+  const type = getFileEventTypeLabel(entry.eventType);
+  const typeClass = `file-${String(entry.eventType ?? 'event').toLowerCase().replace(/_/g, '-')}`;
   return `
     <div class="log-entry ${escapeHtml(typeClass)}">
       <div class="log-meta">
@@ -1623,10 +1730,18 @@ function renderFileEventEntry(entry) {
         <span class="log-type">${escapeHtml(type)}</span>
       </div>
       <div class="log-path">${escapeHtml(entry.path ?? '')}</div>
-      ${renderProcessLine(entry)}
+      ${renderFileEventDetails(entry)}
       ${entry.weight ? renderFsEventWeightValue(entry.weight) : ''}
     </div>
   `;
+}
+
+function renderFileEventDetails(entry) {
+  if (entry.backend) {
+    return `<div class="log-reason">백엔드: ${escapeHtml(entry.backend)}</div>`;
+  }
+
+  return renderProcessLine(entry);
 }
 
 function renderProcessLine(entry) {
@@ -1754,9 +1869,13 @@ function escapeHtml(value) {
 document.getElementById('btn-demo-action')?.addEventListener('click', handleDemoAction);
 document.getElementById('btn-demo-reset')?.addEventListener('click', handleDemoReset);
 document.getElementById('btn-watch-toggle')?.addEventListener('click', handleWatchToggle);
+document.getElementById('demo-mode-toggle-input')?.addEventListener('change', handleDemoModeToggle);
 document.getElementById('btn-watch-target-apply')?.addEventListener('click', handleWatchTargetApply);
 document.getElementById('watch-target-list')?.addEventListener('input', handleWatchTargetInput);
 document.getElementById('watch-target-list')?.addEventListener('click', handleWatchPathRemove);
+document.querySelectorAll('[data-log-clear-target]').forEach((btn) => {
+  btn.addEventListener('click', handleLogClear);
+});
 document.getElementById('response-policy-form')?.addEventListener('submit', handleResponsePolicySave);
 document.getElementById('demo-settings-form')?.addEventListener('submit', handleDemoSettingsSave);
 document.getElementById('monitor-settings-form')?.addEventListener('submit', handleMonitorSettingsSave);
@@ -1779,10 +1898,6 @@ document.querySelectorAll('input[name="quarantineScope"]').forEach((radio) => {
 document.querySelectorAll('input[name="dashboard-theme"]').forEach((radio) => {
   radio.addEventListener('change', handleThemeChange);
 });
-document.querySelectorAll('input[name="watch-mode"]').forEach((radio) => {
-  radio.addEventListener('change', handleWatchModeChange);
-});
-
 document.querySelector('.menu')?.addEventListener('click', (event) => {
   const item = event.target.closest('[data-view]');
   if (!item) return;
