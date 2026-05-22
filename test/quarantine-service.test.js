@@ -16,6 +16,44 @@ test('QuarantineService does not use mount-wide fuser cleanup', async () => {
   assert.doesNotMatch(source, /\bfuser\s+-m\b/);
 });
 
+test('QuarantineService requests shutdown before quarantine work starts', async () => {
+  const source = await fs.readFile(
+    path.resolve('src/isolation/quarantine-service.js'),
+    'utf8'
+  );
+
+  const shutdownIndex = source.indexOf("detail: 'system_shutdown'");
+  const earlyKillIndex = source.indexOf('const earlyKillTask = responsePolicy.killSuspectProcesses');
+  const lockIndex = source.indexOf('const progressItems = await lockPermissions(rootPath);');
+
+  assert.notEqual(shutdownIndex, -1);
+  assert.notEqual(earlyKillIndex, -1);
+  assert.notEqual(lockIndex, -1);
+  assert.ok(shutdownIndex < earlyKillIndex);
+  assert.ok(earlyKillIndex < lockIndex);
+});
+
+test('QuarantineService starts stage 2 kill task before permission lock', async () => {
+  const source = await fs.readFile(
+    path.resolve('src/isolation/quarantine-service.js'),
+    'utf8'
+  );
+
+  const earlyKillIndex = source.indexOf('const earlyKillTask = responsePolicy.killSuspectProcesses');
+  const lockIndex = source.indexOf('const progressItems = await lockPermissions(rootPath);');
+  const awaitKillIndex = source.indexOf('const killError = await earlyKillTask;');
+  const suspectKillIndex = source.indexOf('for (const pid of collectSuspectPids');
+  const pidScanIndex = source.indexOf('const pids = await collectPids(resolvedRootPath);');
+
+  assert.notEqual(earlyKillIndex, -1);
+  assert.notEqual(lockIndex, -1);
+  assert.notEqual(awaitKillIndex, -1);
+  assert.notEqual(suspectKillIndex, -1);
+  assert.notEqual(pidScanIndex, -1);
+  assert.ok(earlyKillIndex < lockIndex);
+  assert.ok(lockIndex < awaitKillIndex);
+  assert.ok(suspectKillIndex < pidScanIndex);
+});
 
 test('QuarantineService kill stage terminates suspect process metadata without killing current server', async () => {
   const eventBus = createEventBus();

@@ -451,6 +451,27 @@ test('startDemo maps worker blocked message to DEMO_ABORTED details', async () =
   assert.equal(aborted.blockedPath, path.join(DEMO_TARGET_ROOT, 'file_4.txt'));
 });
 
+test('startDemo reports killed demo processor when worker exits from signal', async () => {
+  const worker = createFakeDemoWorker();
+  const runtime = createRuntime(createConfig(), {
+    watchOptions: { demo: true },
+    demoProcessFactory: () => worker
+  });
+  let aborted = null;
+
+  runtime.eventBus.once(EVENT_NAMES.DEMO_ABORTED, (event) => {
+    aborted = event;
+  });
+
+  await runtime.startDemo();
+  worker.emit('exit', null, 'SIGTERM');
+
+  const snapshot = runtime.getSnapshot();
+  assert.equal(snapshot.demo.status, 'failed');
+  assert.equal(snapshot.demo.lastError, 'Demo processor killed (SIGTERM)');
+  assert.equal(aborted.lastError, 'Demo processor killed (SIGTERM)');
+});
+
 test('startDemo preserves active demo quarantine instead of resetting target permissions', async () => {
   const worker = createFakeDemoWorker();
   const runtime = createRuntime(createConfig(), {

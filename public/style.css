@@ -674,7 +674,8 @@ button:disabled {
     font-weight: 800;
 }
 
-.permission-error-tag {
+.permission-error-tag,
+.demo-killed-tag {
     display: inline-flex;
     align-items: center;
     min-height: 19px;
@@ -684,6 +685,11 @@ button:disabled {
     background: transparent;
     font-size: 0.72em;
     font-weight: 800;
+}
+
+.demo-killed-tag {
+    border-color: var(--danger);
+    color: var(--danger);
 }
 
 .log-rule,

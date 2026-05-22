@@ -1460,6 +1460,7 @@ function renderDemoEntry(entry) {
         <span class="severity ${severityClass}">${escapeHtml(statusLabel)}</span>
         <span class="log-type">데모</span>
         ${renderPermissionErrorBadge(entry)}
+        ${renderDemoProcessorKilledBadge(entry)}
       </div>
       ${entry.reason ? `<div class="log-reason">${escapeHtml(entry.reason)}</div>` : ''}
     </div>
@@ -1507,6 +1508,28 @@ function renderQuarantineEntry(entry) {
       ${entry.reason ? `<div class="log-reason">${escapeHtml(entry.reason)}</div>` : ''}
     </div>
   `;
+}
+
+function renderDemoProcessorKilledBadge(entry = {}) {
+  if (!hasDemoProcessorKilled(entry)) {
+    return '';
+  }
+
+  return '<span class="demo-killed-tag">Demo processor killed</span>';
+}
+
+function hasDemoProcessorKilled(entry = {}) {
+  const values = [
+    entry.reason,
+    entry.errorCode,
+    entry.errorMessage,
+    entry.lastError,
+    entry.blocked?.reason,
+    entry.blocked?.errorCode,
+    entry.blocked?.errorMessage
+  ];
+
+  return values.some((value) => /demo processor killed/i.test(String(value ?? '')));
 }
 
 function renderPermissionErrorBadge(entry = {}) {

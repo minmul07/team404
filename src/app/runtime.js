@@ -292,9 +292,7 @@ export function createRuntime(config, options = {}) {
           state,
           eventBus,
           status: wasStopping ? 'aborted' : 'failed',
-          lastError: wasStopping
-            ? null
-            : `Demo worker exited before completion (code=${code ?? 'null'} signal=${signal ?? 'null'})`,
+          lastError: wasStopping ? null : formatDemoWorkerExitError({ code, signal }),
           worker
         });
       });
@@ -643,6 +641,14 @@ function handleDemoWorkerMessage({ message, state, eventBus, target, worker, isP
       worker
     });
   }
+}
+
+function formatDemoWorkerExitError({ code, signal }) {
+  if (signal === 'SIGTERM' || signal === 'SIGKILL') {
+    return `Demo processor killed (${signal})`;
+  }
+
+  return `Demo worker exited before completion (code=${code ?? 'null'} signal=${signal ?? 'null'})`;
 }
 
 function finishDemoWorker({ state, eventBus, status, lastError = null, blocked = null, worker }) {

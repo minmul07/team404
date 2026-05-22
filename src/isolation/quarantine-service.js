@@ -100,6 +100,25 @@ export class QuarantineService {
     try {
       const records = [];
 
+      // 3단계 대응은 즉시 차단을 우선해 OS 종료 요청을 가장 먼저 보낸다.
+      if (responsePolicy.shutdownSystem) {
+        const shutdownResult = await requestSystemShutdown();
+        await appendLog({
+          eventType: 'quarantine_progress',
+          incidentId: incident.id,
+          rootPath: primaryRootPath,
+          rootPaths,
+          detail: 'system_shutdown',
+          result: shutdownResult.status,
+          reason: shutdownResult.reason
+        });
+      }
+
+      const earlyKillTask = responsePolicy.killSuspectProcesses && !responsePolicy.shutdownSystem
+        ? runKillStage({ rootPaths, incident, processKiller: this.processKiller })
+          .then(() => null, (error) => error)
+        : null;
+
       for (const rootPath of rootPaths) {
         const entries = responsePolicy.lockDirectoryPermissions
           ? await collectPermissions(rootPath)
@@ -113,23 +132,6 @@ export class QuarantineService {
         rootPaths,
         records
       });
-
-      // 해당 경로를 점유 중인 프로세스 종료 (demo-target 범위만)
-      if (responsePolicy.killSuspectProcesses) {
-        for (const rootPath of rootPaths) {
-          const killedPids = await killProcessesSafe(rootPath, {
-            suspectProcesses: incident.suspectProcesses,
-            killProcess: this.processKiller
-          });
-          await appendLog({
-            eventType: 'quarantine_progress',
-            incidentId: incident.id,
-            rootPath,
-            detail: `processes_killed`,
-            pids: killedPids
-          });
-        }
-      }
 
       // quarantine.sh 호출 – per-file progress stdout 파싱
       if (responsePolicy.lockDirectoryPermissions) {
@@ -147,16 +149,14 @@ export class QuarantineService {
         }
       }
 
-      if (responsePolicy.shutdownSystem) {
-        const shutdownResult = await requestSystemShutdown();
-        await appendLog({
-          eventType: 'quarantine_progress',
-          incidentId: incident.id,
-          rootPath: primaryRootPath,
+      if (earlyKillTask) {
+        const killError = await earlyKillTask;
+        if (killError) throw killError;
+      } else if (responsePolicy.killSuspectProcesses) {
+        await runKillStage({
           rootPaths,
-          detail: 'system_shutdown',
-          result: shutdownResult.status,
-          reason: shutdownResult.reason
+          incident,
+          processKiller: this.processKiller
         });
       }
 
@@ -513,6 +513,22 @@ function parseProgressOutput(stdout) {
   return items;
 }
 
+async function runKillStage({ rootPaths, incident, processKiller }) {
+  await Promise.all(rootPaths.map(async (rootPath) => {
+    const killedPids = await killProcessesSafe(rootPath, {
+      suspectProcesses: incident.suspectProcesses,
+      killProcess: processKiller
+    });
+    await appendLog({
+      eventType: 'quarantine_progress',
+      incidentId: incident.id,
+      rootPath,
+      detail: `processes_killed`,
+      pids: killedPids
+    });
+  }));
+}
+
 /**
  * rootPath 를 점유 중인 프로세스를 종료한다.
  * 안전성을 위해 demo-target 경로만 허용하고, PID가 실제 rootPath 하위 경로를
@@ -530,13 +546,27 @@ async function killProcessesSafe(rootPath, { suspectProcesses = [], killProcess 
   }
 
   const excludedPids = new Set([1, process.pid, process.ppid].filter(Boolean));
-  const safePids = [];
   const seenPids = new Set();
+  const killed = [];
+
+  const tryKillPid = (pid) => {
+    try {
+      killProcess(pid, 'SIGTERM');
+      killed.push(pid);
+    } catch {
+      try {
+        killProcess(pid, 'SIGKILL');
+        killed.push(pid);
+      } catch {
+        // 이미 종료됐거나 권한 없음 – 무시
+      }
+    }
+  };
 
   for (const pid of collectSuspectPids(suspectProcesses, resolvedRootPath)) {
     if (!excludedPids.has(pid) && !seenPids.has(pid)) {
       seenPids.add(pid);
-      safePids.push(pid);
+      tryKillPid(pid);
     }
   }
 
@@ -548,22 +578,7 @@ async function killProcessesSafe(rootPath, { suspectProcesses = [], killProcess 
 
     seenPids.add(pid);
     if (await processUsesPathUnderRoot(pid, resolvedRootPath)) {
-      safePids.push(pid);
-    }
-  }
-
-  const killed = [];
-  for (const pid of safePids) {
-    try {
-      killProcess(pid, 'SIGTERM');
-      killed.push(pid);
-    } catch {
-      try {
-        killProcess(pid, 'SIGKILL');
-        killed.push(pid);
-      } catch {
-        // 이미 종료됐거나 권한 없음 – 무시
-      }
+      tryKillPid(pid);
     }
   }
   return killed;
@@ -604,32 +619,18 @@ async function collectPids(rootPath) {
 }
 
 async function requestSystemShutdown() {
-  if (process.env.TEAM404_ALLOW_SYSTEM_SHUTDOWN !== '1') {
+  const command = 'systemctl poweroff --force --force || poweroff -f';
+
+  try {
+    const child = exec(command, () => {});
+    child.unref?.();
+    return { status: 'requested', command };
+  } catch (error) {
     return {
-      status: 'skipped',
-      reason: 'TEAM404_ALLOW_SYSTEM_SHUTDOWN is not enabled'
+      status: 'failed',
+      reason: error.message
     };
   }
-
-  const commands = [
-    'systemctl poweroff --force --force',
-    'poweroff -f'
-  ];
-
-  const failures = [];
-  for (const command of commands) {
-    try {
-      await execAsync(command);
-      return { status: 'requested', command };
-    } catch (error) {
-      failures.push(`${command}: ${error.message}`);
-    }
-  }
-
-  return {
-    status: 'failed',
-    reason: failures.join(' | ')
-  };
 }
 
 function isSafeKillRoot(rootPath) {
