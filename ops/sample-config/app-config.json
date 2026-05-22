@@ -11,7 +11,7 @@
     "targets": [
       {
         "id": "manual-1",
-        "rootPath": "/home/minmul-ubuntu/team404/tmp/demo-target",
+        "rootPath": "/home/ddddd/school/team404/tmp/demo-target",
         "enabled": true,
         "autoQuarantineEnabled": false,
         "demoAllowed": false
@@ -23,7 +23,7 @@
   },
   "rules": [],
   "detectionPolicy": {
-    "thresholdWeight": 16.9,
+    "thresholdWeight": 10,
     "weights": {
       "knownExtension": 0.1,
       "unknownExtension": 1,

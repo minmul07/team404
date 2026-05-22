@@ -36,7 +36,7 @@ export function createRuntime(config, options = {}) {
   );
   const quarantineService = new QuarantineService({
     eventBus,
-    getResponsePolicy: () => ({ ...responsePolicy }),
+    getResponsePolicy: () => getEffectiveResponsePolicy(responsePolicy, monitorService.getHealth()),
     getWatchTargets: () => monitorService.getHealth().targets,
     processKiller: options.processKiller
   });
@@ -136,6 +136,9 @@ export function createRuntime(config, options = {}) {
     },
     getResponsePolicy() {
       return { ...responsePolicy };
+    },
+    getEffectiveResponsePolicy() {
+      return getEffectiveResponsePolicy(responsePolicy, monitorService.getHealth());
     },
     getDetectionPolicy() {
       return cloneDetectionPolicy(detectionPolicy);
@@ -260,7 +263,8 @@ export function createRuntime(config, options = {}) {
           state,
           eventBus,
           target,
-          worker
+          worker,
+          isPidTrackingAvailable: () => monitorService.getHealth().pidTrackingAvailable
         });
       });
 
@@ -366,7 +370,7 @@ export function createRuntime(config, options = {}) {
         pidTrackingAvailable: monitorHealth.pidTrackingAvailable,
         activeMode: monitorHealth.activeMode,
         activeTarget: monitorHealth.activeTarget,
-        responsePolicy: this.getResponsePolicy(),
+        responsePolicy: this.getEffectiveResponsePolicy(),
         detectionPolicy: this.getDetectionPolicy(),
         demoSettings: this.getDemoSettings(),
         demo: toDemoSnapshot(state.demo),
@@ -388,7 +392,7 @@ export function createRuntime(config, options = {}) {
         activeMode: monitorHealth.activeMode,
         activeTarget: monitorHealth.activeTarget,
         targets: monitorHealth.targets,
-        responsePolicy: this.getResponsePolicy(),
+        responsePolicy: this.getEffectiveResponsePolicy(),
         detectionPolicy: this.getDetectionPolicy(),
         demoSettings: this.getDemoSettings(),
         demo: toDemoSnapshot(state.demo),
@@ -512,6 +516,18 @@ export function normalizeResponsePolicy(policy = {}) {
   };
 }
 
+function getEffectiveResponsePolicy(policy, monitorHealth = {}) {
+  const normalizedPolicy = normalizeResponsePolicy(policy);
+  if (monitorHealth.pidTrackingAvailable) {
+    return normalizedPolicy;
+  }
+
+  return {
+    ...normalizedPolicy,
+    killSuspectProcesses: false
+  };
+}
+
 function toDemoSnapshot(demo) {
   return {
     status: demo.status,
@@ -552,25 +568,30 @@ function startDemoWorker({ cwd, uid, gid, fileCount }) {
   return fork(DEMO_WORKER_PATH, [], forkOptions);
 }
 
-function handleDemoWorkerMessage({ message, state, eventBus, target, worker }) {
+function handleDemoWorkerMessage({ message, state, eventBus, target, worker, isPidTrackingAvailable = () => false }) {
   if (!message || state.demo.worker !== worker) {
     return;
   }
 
   if (message.type === 'fs_event') {
     const now = new Date();
-    eventBus.emit(EVENT_NAMES.FS_EVENT, {
+    const event = {
       type: message.payload?.eventType,
       path: message.payload?.filePath,
       observedAt: now.toISOString(),
       observedTs: now.getTime(),
       monitorTargetId: target.id,
       monitorRootPath: target.rootPath,
-      pid: worker.pid ?? null,
-      comm: 'team404-demo-worker',
-      exe: DEMO_WORKER_PATH,
       source: 'demo-worker'
-    });
+    };
+
+    if (isPidTrackingAvailable()) {
+      event.pid = worker.pid ?? null;
+      event.comm = 'team404-demo-worker';
+      event.exe = DEMO_WORKER_PATH;
+    }
+
+    eventBus.emit(EVENT_NAMES.FS_EVENT, event);
     return;
   }
 

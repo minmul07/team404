@@ -41,6 +41,8 @@ const DEFAULT_DETECTION_POLICY = {
 let detectionPolicyDraft = cloneDetectionPolicy(DEFAULT_DETECTION_POLICY);
 const pendingRuleWeightsByPath = new Map();
 let latestRuleWeight = null;
+let latestSnapshot = null;
+let latestResponsePolicy = null;
 
 applyTheme(loadThemePreference());
 
@@ -160,8 +162,12 @@ function updateMonitorBackendStatus(snapshot = {}) {
   const pidTrackingAvailable = Boolean(monitor.pidTrackingAvailable ?? snapshot.pidTrackingAvailable);
   const status = monitor.status ?? snapshot.status;
 
+  if (latestResponsePolicy) {
+    updateResponsePolicyControls(latestResponsePolicy, { monitor });
+  }
+
   if (fallbackReason) {
-    setServerStatus('warning', `감시 fallback: inotify (${fallbackReason})`);
+    setServerStatus('warning', formatMonitorFallbackSummary(activeBackend));
     return;
   }
 
@@ -179,11 +185,23 @@ function updateMonitorBackendStatus(snapshot = {}) {
   setServerStatus('online', '메인 서버 연결됨 (감시 및 격리)');
 }
 
+function formatMonitorFallbackSummary(activeBackend = 'inotify') {
+  const backend = activeBackend || 'inotify';
+  return `감시 모드: ${backend} (auditd 사용 불가로 자동 전환)`;
+}
+
+function formatMonitorFallbackDetails(activeBackend = 'inotify', fallbackReason = '') {
+  const backend = activeBackend || 'inotify';
+  const reason = fallbackReason ? ` (${fallbackReason})` : '';
+  return `활성화: ${backend} / auditd 사용 불가로 자동 전환${reason}`;
+}
+
 
 async function loadState() {
   try {
     const snapshotRes = await fetch(`${API_URL}/snapshot`);
     const snapshot = await snapshotRes.json();
+    latestSnapshot = snapshot;
 
     const targetPaths = getSnapshotTargetPaths(snapshot);
     document.getElementById('target-path').innerText = targetPaths.length > 0
@@ -200,7 +218,7 @@ async function loadState() {
     updateDemoControls(snapshot);
     updateDemoSettingsControls(snapshot);
     updateMonitorSettingsControls(snapshot);
-    updateResponsePolicyControls(snapshot.responsePolicy);
+    updateResponsePolicyControls(snapshot.responsePolicy, snapshot);
     updateDetectionPolicyControls(snapshot.detectionPolicy);
     updateRuleWeightDisplay(latestRuleWeight ?? {
       currentWeight: 0,
@@ -374,7 +392,7 @@ function updateMonitorSettingsControls(snapshot = {}) {
 
   if (status) {
     if (fallbackReason) {
-      status.innerText = `활성화: ${activeBackend} / fallback: ${fallbackReason}`;
+      status.innerText = formatMonitorFallbackDetails(activeBackend, fallbackReason);
     } else {
       status.innerText = `활성화: ${activeBackend}${pidTrackingAvailable ? ' / PID 추적 가능' : ''}`;
     }
@@ -430,7 +448,8 @@ function showMonitorSettingsError(message) {
   error.innerText = message;
 }
 
-function updateResponsePolicyControls(policy = {}) {
+function updateResponsePolicyControls(policy = {}, context = latestSnapshot) {
+  latestResponsePolicy = policy;
   const lockInput = document.getElementById('policy-lock-permissions');
   const killInput = document.getElementById('policy-kill-processes');
   const shutdownInput = document.getElementById('policy-shutdown-system');
@@ -440,12 +459,18 @@ function updateResponsePolicyControls(policy = {}) {
   const error = document.getElementById('response-policy-error');
 
   const selectedLevel = getPolicyLevelFromPolicy(policy);
+  const pidTrackingAvailable = getPidTrackingAvailable(context);
+  const effectiveSelectedLevel = selectedLevel === 'kill' && !pidTrackingAvailable ? 'lock' : selectedLevel;
   const selectedScope = policy.quarantineScope === 'all-watch-targets' ? 'all-watch-targets' : 'incident-target';
   const activeElement = document.activeElement;
   if (lockInput && killInput && shutdownInput && ![lockInput, killInput, shutdownInput].includes(activeElement)) {
-    lockInput.checked = selectedLevel === 'lock';
-    killInput.checked = selectedLevel === 'kill';
-    shutdownInput.checked = selectedLevel === 'shutdown';
+    lockInput.checked = effectiveSelectedLevel === 'lock';
+    killInput.checked = effectiveSelectedLevel === 'kill';
+    shutdownInput.checked = effectiveSelectedLevel === 'shutdown';
+  }
+  if (killInput) {
+    killInput.disabled = !pidTrackingAvailable;
+    killInput.closest('.policy-option')?.classList.toggle('disabled', !pidTrackingAvailable);
   }
   if (scopeIncidentInput && scopeAllInput && ![scopeIncidentInput, scopeAllInput].includes(activeElement)) {
     scopeIncidentInput.checked = selectedScope === 'incident-target';
@@ -453,7 +478,7 @@ function updateResponsePolicyControls(policy = {}) {
   }
 
   if (status) {
-    status.innerText = renderPolicyStatus(policy);
+    status.innerText = renderPolicyStatus(policy, { pidTrackingAvailable });
   }
   if (error) {
     error.hidden = true;
@@ -461,10 +486,11 @@ function updateResponsePolicyControls(policy = {}) {
   }
 }
 
-function renderPolicyStatus(policy = {}) {
+function renderPolicyStatus(policy = {}, { pidTrackingAvailable = true } = {}) {
   const level = getPolicyLevelFromPolicy(policy);
   const scope = policy.quarantineScope === 'all-watch-targets' ? '전체 디렉터리' : '발생 디렉터리';
   if (level === 'shutdown') return `활성화: 3단계 / ${scope}`;
+  if (level === 'kill' && !pidTrackingAvailable) return `활성화: 1단계 / ${scope} (2단계는 auditd 필요)`;
   if (level === 'kill') return `활성화: 2단계 / ${scope}`;
   return `활성화: 1단계 / ${scope}`;
 }
@@ -475,7 +501,7 @@ function getPolicyLevelFromPolicy(policy = {}) {
   return 'lock';
 }
 
-function getPolicyFromSelectedLevel(level) {
+function getPolicyFromSelectedLevel(level, { pidTrackingAvailable = true } = {}) {
   const quarantineScope = document.querySelector('input[name="quarantineScope"]:checked')?.value === 'all-watch-targets'
     ? 'all-watch-targets'
     : 'incident-target';
@@ -483,13 +509,13 @@ function getPolicyFromSelectedLevel(level) {
   if (level === 'shutdown') {
     return {
       lockDirectoryPermissions: true,
-      killSuspectProcesses: true,
+      killSuspectProcesses: pidTrackingAvailable,
       shutdownSystem: true,
       quarantineScope
     };
   }
 
-  if (level === 'kill') {
+  if (level === 'kill' && pidTrackingAvailable) {
     return {
       lockDirectoryPermissions: true,
       killSuspectProcesses: true,
@@ -504,6 +530,11 @@ function getPolicyFromSelectedLevel(level) {
     shutdownSystem: false,
     quarantineScope
   };
+}
+
+function getPidTrackingAvailable(context = latestSnapshot) {
+  const monitor = context?.monitor ?? context?.health?.monitor ?? context;
+  return Boolean(monitor?.pidTrackingAvailable ?? context?.pidTrackingAvailable ?? context?.health?.pidTrackingAvailable);
 }
 
 async function handleWatchToggle() {
@@ -781,7 +812,15 @@ async function handleResponsePolicySave(event) {
 
   const saveBtn = document.getElementById('btn-response-policy-save');
   const selectedLevel = document.querySelector('input[name="responsePolicyLevel"]:checked')?.value ?? 'lock';
-  const payload = getPolicyFromSelectedLevel(selectedLevel);
+  const pidTrackingAvailable = getPidTrackingAvailable();
+
+  if (selectedLevel === 'kill' && !pidTrackingAvailable) {
+    updateResponsePolicyControls(latestResponsePolicy ?? {}, latestSnapshot);
+    showResponsePolicyError('2단계 대응은 auditd PID 추적이 가능할 때만 사용할 수 있습니다.');
+    return;
+  }
+
+  const payload = getPolicyFromSelectedLevel(selectedLevel, { pidTrackingAvailable });
 
   if (payload.shutdownSystem && !confirm('OS 강제 종료 단계가 활성화됩니다. 격리 VM 또는 실습 환경에서만 사용하세요.')) {
     return;
@@ -810,8 +849,9 @@ async function handleResponsePolicySave(event) {
     }
 
     const policy = await response.json();
-    updateResponsePolicyControls(policy);
+    updateResponsePolicyControls(policy, latestSnapshot);
     showNotification('대응 정책이 저장되었습니다.');
+    await loadState();
   } catch (err) {
     console.error(err);
     showResponsePolicyError('대응 정책 저장 중 네트워크 오류가 발생했습니다.');
@@ -1366,6 +1406,7 @@ function normalizeIncidentEvent(msg) {
         rootPath: payload.rootPath,
         rootPaths: payload.rootPaths ?? [],
         entryCount: payload.entryCount,
+        reason: payload.reason,
         observedAt: payload.observedAt ?? new Date().toISOString()
       };
     case 'RESTORE_COMPLETED':
@@ -1383,6 +1424,8 @@ function normalizeIncidentEvent(msg) {
         _type: 'demo',
         status: payload.status ?? msg.type.replace('DEMO_', '').toLowerCase(),
         reason: payload.lastError,
+        errorCode: payload.errorCode,
+        errorMessage: payload.errorMessage,
         observedAt: payload.completedAt ?? payload.startedAt ?? new Date().toISOString()
       };
     default:
@@ -1416,6 +1459,7 @@ function renderDemoEntry(entry) {
         <span class="log-time">${time}</span>
         <span class="severity ${severityClass}">${escapeHtml(statusLabel)}</span>
         <span class="log-type">데모</span>
+        ${renderPermissionErrorBadge(entry)}
       </div>
       ${entry.reason ? `<div class="log-reason">${escapeHtml(entry.reason)}</div>` : ''}
     </div>
@@ -1434,6 +1478,7 @@ function renderAlertEntry(alert) {
         <span class="log-time">${time}</span>
         <span class="severity ${escapeHtml(severity)}">${escapeHtml(getSeverityLabel(severity))}</span>
         <span class="log-type">${escapeHtml(getIncidentTypeLabel(type))}</span>
+        ${renderPermissionErrorBadge(alert)}
         ${alert.ruleName ? `<span class="log-rule">${escapeHtml(alert.ruleName)}</span>` : ''}
       </div>
       ${alert.samplePaths?.length ? renderFileChips(extractFileNames(alert.samplePaths)) : ''}
@@ -1455,11 +1500,35 @@ function renderQuarantineEntry(entry) {
         <span class="log-time">${time}</span>
         <span class="severity ${severityClass}">${escapeHtml(statusLabel)}</span>
         <span class="log-type">격리</span>
+        ${renderPermissionErrorBadge(entry)}
       </div>
       <div class="log-path">${escapeHtml(pathLabel)}</div>
       <div class="log-reason">ID: ${escapeHtml(entry.incidentId ?? '-')} · ${Number(entry.entryCount) || 0}개 항목</div>
+      ${entry.reason ? `<div class="log-reason">${escapeHtml(entry.reason)}</div>` : ''}
     </div>
   `;
+}
+
+function renderPermissionErrorBadge(entry = {}) {
+  if (!hasPermissionError(entry)) {
+    return '';
+  }
+
+  return '<span class="permission-error-tag">Permission denied</span>';
+}
+
+function hasPermissionError(entry = {}) {
+  const values = [
+    entry.reason,
+    entry.errorCode,
+    entry.errorMessage,
+    entry.lastError,
+    entry.blocked?.reason,
+    entry.blocked?.errorCode,
+    entry.blocked?.errorMessage
+  ];
+
+  return values.some((value) => /(?:\bEACCES\b|\bEPERM\b|permission denied)/i.test(String(value ?? '')));
 }
 
 

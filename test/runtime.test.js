@@ -93,7 +93,13 @@ test('createRuntime updates response policy', () => {
     shutdownSystem: false,
     quarantineScope: 'incident-target'
   });
-  assert.deepEqual(runtime.getHealth().responsePolicy, policy);
+  assert.deepEqual(runtime.getResponsePolicy(), policy);
+  assert.deepEqual(runtime.getHealth().responsePolicy, {
+    lockDirectoryPermissions: true,
+    killSuspectProcesses: false,
+    shutdownSystem: false,
+    quarantineScope: 'incident-target'
+  });
 });
 
 test('createRuntime treats shutdown response policy as the highest cumulative stage', () => {
@@ -407,8 +413,8 @@ test('startDemo runs worker child and republishes worker file events', async () 
   assert.equal(fsEvent.type, 'modify');
   assert.equal(fsEvent.path, path.join(DEMO_TARGET_ROOT, 'file_1.txt'));
   assert.equal(fsEvent.monitorRootPath, DEMO_TARGET_ROOT);
-  assert.equal(fsEvent.pid, worker.pid);
-  assert.equal(fsEvent.comm, 'team404-demo-worker');
+  assert.equal(fsEvent.pid, undefined);
+  assert.equal(fsEvent.comm, undefined);
   assert.equal(fsEvent.source, 'demo-worker');
 });
 
